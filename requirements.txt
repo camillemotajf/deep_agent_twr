@@ -1,0 +1,13 @@
+langchain
+typing
+langgraph
+pymongo
+sqlalchemy
+langchain_experimental
+langchain_openai
+nest_asyncio
+langchain-google-genai
+rich
+motor
+pydantic_settings
+aiomysql

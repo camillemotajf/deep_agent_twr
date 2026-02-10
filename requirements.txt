@@ -11,3 +11,10 @@ rich
 motor
 pydantic_settings
 aiomysql
+deepagents
+pandas
+numpy
+matplotlib
+seaborn
+torch
+sentence_transformers

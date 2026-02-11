@@ -34,7 +34,7 @@ class MentorNet(nn.Module):
         super().__init__()
 
         self.num_classes = num_classes
-        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.device = "cpu"
         self.ema_alpha = 0.9
         self.running_var_threshold = None
         self.running_loss_threshold = None

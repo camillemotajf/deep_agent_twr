@@ -81,7 +81,7 @@ class Trainer:
     ):
         
         if not device:
-            self.device = "cuda" if torch.cuda.is_available() else "cpu"
+            self.device = "cpu"
         else:
             self.device = device
       

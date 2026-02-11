@@ -13,3 +13,11 @@ class CampaignService:
             traffic_source=traffic_source,
             limit=limit
         )
+    
+    async def fetch_traffic_source_by_hash(
+            self,
+            hash: str
+    ) -> str:
+        return await self.repository.get_traffic_source_by_hash(
+            hash=hash
+        )

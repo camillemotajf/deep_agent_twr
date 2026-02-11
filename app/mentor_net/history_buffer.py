@@ -3,7 +3,7 @@ import torch
 class HistoryBuffer:
     def __init__(self, num_samples, window_size=10, feature_dim=2):
         self.window_size = window_size
-        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.device = "cpu"
         self.buffer = torch.zeros((num_samples, window_size, feature_dim), device=self.device)
         
     def update(self, indices, new_values):

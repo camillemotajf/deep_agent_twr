@@ -7,7 +7,7 @@ from sentence_transformers import SentenceTransformer
 from sklearn.preprocessing import LabelEncoder # LabelEncoder fica em preprocessing, não calibration
 
 class HTTPLogDataset(Dataset):
-    def __init__(self, dataframe, label_map: dict, embeddings=None, model_name="all-MiniLM-L6-v2", device="cuda"):
+    def __init__(self, dataframe, label_map: dict, embeddings=None, model_name="all-MiniLM-L6-v2", device="cpu"):
         
         self.df = dataframe.reset_index(drop=True)
         self.texts = [self._serialize_row(row) for _, row in self.df.iterrows()]

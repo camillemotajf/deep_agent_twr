@@ -4,7 +4,7 @@ class RequestService:
     def __init__(self, repository: MongoRepository):
         self.repository = repository
 
-    async def fetch_recent_flagged_requests(
+    def fetch_recent_flagged_requests(
         self,
         hashes: list[str],
         limit: int = 1000
@@ -21,4 +21,4 @@ class RequestService:
             hashes=hashes,
             limit=limit
         )
-        return await results
+        return results

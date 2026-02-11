@@ -1,5 +1,7 @@
 from langchain.tools import tool
 import pandas as pd
+import json
+from bson import json_util
 import torch
 from torch.utils.data import DataLoader
 import os
@@ -46,14 +48,30 @@ def _load_trainer(traffic_source: str, num_samples: int):
 @tool
 async def run_ml_inference(
     traffic_source: str,
-    requests: list[dict]
+    file_path: str | None = None,
 ) -> dict:
     """
-    Aplica o modelo MentorNet/Student para identificar ruído,
-    inconsistências de rótulo e confiança do modelo.
+    Executes MentorNet/Student ML inference to detect label noise and hidden bots.
+    
+    :param traffic_source: The traffic origin (e.g., 'google') to load specific model weights.
+    :type traffic_source: str
+    :param file_path: Path to a JSON file containing requests.
+    :type file_path: str | None
+    :return: summary of misclassifications, trust scores, and potential anomalies.
+    :rtype: dict
     """
 
-    df = pd.DataFrame(requests)
+    data = []
+
+    if file_path and os.path.exists(file_path):
+        with open(file_path, "r") as f:
+            data = json_util.loads(f.read())
+
+    df = pd.DataFrame(data)
+
+    if df.empty:
+        return {"error": "Empty Dataframe to analise"}
+    
     dataset = HTTPLogDataset(df, label_map=LABEL_MAP)
 
     loader = DataLoader(
@@ -101,11 +119,15 @@ async def run_ml_inference(
                     "ncs": float(ncs[i])
                 })
 
-    return {
+    summary_stats = {
         "traffic_source": traffic_source,
-        "total_samples": len(results),
-        "results": results
+        "processed_samples": len(df),
+        "misclassifications_detected": sum(1 for r in results if r['true_label'] != r['model_pred']),
+        "average_loss": sum(r['loss'] for r in results) / len(results) if results else 0,
+        "suspicious_ids": [r['id'] for r in results if r['mentor_weight'] < 0.5][:20]
     }
+
+    return summary_stats
 
 @tool
 def summarize_misclassifications(df: pd.DataFrame) -> dict:

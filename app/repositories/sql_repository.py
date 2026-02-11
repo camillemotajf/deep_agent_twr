@@ -53,3 +53,27 @@ class CampaignRepository:
 
             result = await session.execute(stmt)
             return result.scalars().all()
+        
+    async def get_traffic_source_by_hash(
+            self,
+            hash: str
+    ) -> str:
+        
+        async with self.session_factory() as session:
+
+            cpg_query = (
+                select(Campaign.traffic_sources_fk)
+                .where(Campaign.hash == hash)
+            )
+
+            cpg_result = await session.execute(cpg_query)
+            cpg_tf_fk = cpg_result.scalar_one_or_none()
+
+            tf_query = (
+                    select(TrafficSource.traffic_source).where(TrafficSource.traffic_sources_pk == cpg_tf_fk)
+                )
+            tf_result = await session.execute(tf_query)
+            tf = tf_result.scalar_one_or_none()
+
+            return tf
+

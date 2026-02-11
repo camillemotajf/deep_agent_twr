@@ -10,7 +10,7 @@ class SPLTarget:
 
     def __init__(self, ema_alpha=0.9):
         self.ema_alpha = ema_alpha
-        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.device = "cpu"
 
         self.running_var_threshold = None
         self.running_loss_threshold = None

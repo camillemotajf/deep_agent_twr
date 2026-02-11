@@ -5,8 +5,9 @@ pymongo
 sqlalchemy
 langchain_experimental
 langchain_openai
-nest_asyncio
 langchain-google-genai
+langchain-ollama
+nest_asyncio
 rich
 motor
 pydantic_settings

@@ -38,7 +38,7 @@ class MentorNet(nn.Module):
         self.ema_alpha = 0.9
         self.running_var_threshold = None
         self.running_loss_threshold = None
-        self.spl_computer = SPLTarget(ema_alpha=0.9, device=self.device)
+        self.spl_computer = SPLTarget(ema_alpha=0.9)
 
         self.lstm = nn.LSTM(
             input_size=input_size,

@@ -10,6 +10,7 @@ dependencies = [
     "langchain>=1.2.9",
     "langchain-experimental>=0.4.1",
     "langchain-google-genai>=4.2.0",
+    "langchain-ollama>=1.0.1",
     "langchain-openai>=1.1.8",
     "langgraph>=1.0.8",
     "matplotlib>=3.10.8",

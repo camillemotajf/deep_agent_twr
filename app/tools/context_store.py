@@ -1,7 +1,13 @@
+from contextvars import ContextVar
 from datetime import datetime
+import gc
 import os
 import pandas as pd
 from typing import Optional
+
+# _ctx_mongo_df = ContextVar("mongo_df", default=None)
+# _ctx_ml_results = ContextVar("ml_results", default=None)
+# _ctx_source = ContextVar("traffic_source", default=None)
 
 class AnalysisContext:
     _df_mongo_results: Optional[pd.DataFrame] = None  
@@ -13,18 +19,19 @@ class AnalysisContext:
     def set_mongo_data(cls, df: pd.DataFrame, source: str):
         cls._df_mongo_results = df
         cls._traffic_source = source
-        cls._df_ml_results = None 
+        cls._df_ml_results = None
         print(f"DEBUG [Context]: Mongo Data Loaded. Rows: {len(df)}")
 
     @classmethod
     def set_ml_results_data(cls, df: pd.DataFrame):
         cls._df_ml_results = df
+        cls._df_mongo_results = None
+        gc.collect()
         print(f"DEBUG [Context]: ML Results Stored. Rows: {len(df)}")
 
     @classmethod
     def set_traffic_source(cls, traffic_source: str):
         cls._traffic_source = traffic_source
-
 
     @classmethod
     def get_data_from_mongo(cls) -> pd.DataFrame:
@@ -41,16 +48,12 @@ class AnalysisContext:
     @classmethod
     def get_traffic_source(cls) -> str:
         return cls._traffic_source or "unknown"
-    
-    @classmethod
-    def get_models_path(cls) -> str:
-        return cls._models_path
 
     @classmethod
     def get_status(cls) -> str:
         status = []
         if cls._df_mongo_results is not None:
-            status.append(f"Mongo Raw: {len(cls._df_mongo_results)} rows ({cls._file_loaded})")
+            status.append(f"Mongo Raw: {len(cls._df_mongo_results)}")
         else:
             status.append("Mongo Raw: Empty")
             
@@ -60,3 +63,10 @@ class AnalysisContext:
             status.append("ML Processed: Pending")
             
         return " | ".join(status)
+    
+    @classmethod
+    def clear_memory(cls):
+        cls._df_mongo_results = None
+        cls._df_ml_results = None
+
+        gc.collect()

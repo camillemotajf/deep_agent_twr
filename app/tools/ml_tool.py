@@ -8,6 +8,7 @@ import os
 import seaborn as sns
 import matplotlib.pyplot as plt
 
+from app.mentor_net.mentor_preditor import MentorNetPredictor
 from app.services import ml_noise_service
 from app.mentor_net.mentornet import MentorNet
 from app.mentor_net.student_mlp import MLPStudent
@@ -76,6 +77,10 @@ async def run_ml_inference(
     
     dataset = HTTPLogDataset(df, label_map=LABEL_MAP)
 
+    model_path = f"{MODELS_PATH}/{traffic_source}"
+
+    mentor_predictor = MentorNetPredictor(artifact_path=model_path)
+
     loader = DataLoader(
         dataset,
         batch_size=64,
@@ -83,50 +88,15 @@ async def run_ml_inference(
         num_workers=0
     )
 
-    trainer = _load_trainer(
-        traffic_source=traffic_source,
-        num_samples=len(dataset)
-    )
+    df_results = mentor_predictor.predict(loader)
 
-    results = []
-    with torch.no_grad():
-        for batch in loader:
-            ids = batch["id"]
-            x = batch["x"]
-            y = batch["label"]
-
-            logits, embeddings = trainer.student(x, return_embeddings=True)
-            preds = logits.argmax(dim=1)
-
-            raw_losses = trainer.student.get_individual_losses(logits, y)
-
-            ncs = trainer.get_neighborhood_score(
-                embeddings, y, k=10
-            )
-
-            weights = torch.ones_like(raw_losses)
-            if trainer.mentor:
-                hist = trainer.history.get(ids)
-                epoch_vec = torch.full((len(y),), 99)
-                weights = trainer.mentor(hist, y, epoch_vec)
-                weights = torch.clamp(weights.view(-1), 0, 1)
-
-            for i in range(len(ids)):
-                results.append({
-                    "id": int(ids[i]),
-                    "true_label": int(y[i]),
-                    "model_pred": int(preds[i]),
-                    "loss": float(raw_losses[i]),
-                    "mentor_weight": float(weights[i]),
-                    "ncs": float(ncs[i])
-                })
 
     summary_stats = {
         "traffic_source": traffic_source,
         "processed_samples": len(df),
-        "misclassifications_detected": sum(1 for r in results if r['true_label'] != r['model_pred']),
-        "average_loss": sum(r['loss'] for r in results) / len(results) if results else 0,
-        "suspicious_ids": [r['id'] for r in results if r['mentor_weight'] < 0.5][:20]
+        "misclassifications_detected": sum(1 for r in df_results if r['target'] != r['pred']),
+        "average_loss": sum(r['loss'] for r in df_results) / len(df_results) if df_results else 0,
+        "suspicious_ids": [r['id'] for r in df_results if r['weight'] < 0.5][:20]
     }
 
     return summary_stats

@@ -8,6 +8,7 @@ import os
 import seaborn as sns
 import matplotlib.pyplot as plt
 
+from app.mentor_net.mentor_preditor import MentorNetPredictor
 from app.services import ml_noise_service
 from app.mentor_net.mentornet import MentorNet
 from app.mentor_net.student_mlp import MLPStudent
@@ -21,41 +22,41 @@ MODELS_PATH = f"{os.getcwd()}/files/models"
 LABEL_MAP = {"bots": 0, "unsafe": 1}
 
 
-def _load_trainer(traffic_source: str, num_samples: int):
-    model_path = f"{MODELS_PATH}/{traffic_source}"
+# def _load_trainer(traffic_source: str, num_samples: int):
+#     model_path = f"{MODELS_PATH}/{traffic_source}"
 
-    buffer = HistoryBuffer(
-        num_samples=num_samples,
-        window_size=10,
-        feature_dim=3,
-    )
+#     buffer = HistoryBuffer(
+#         num_samples=num_samples,
+#         window_size=10,
+#         feature_dim=3,
+#     )
 
-    num_classes = 2
+#     num_classes = 2
 
-    mentor = MentorNet(
-        input_size=3,       # Importante: [loss, diff, ncs]
-        hidden_size=32,
-        num_classes=num_classes,
-    )
-    mentor.load_state_dict(torch.load(f"{model_path}/mentor.pt", map_location="cpu"))
-    mentor.eval()
+#     mentor = MentorNet(
+#         input_size=3,       # Importante: [loss, diff, ncs]
+#         hidden_size=32,
+#         num_classes=num_classes,
+#     )
+#     mentor.load_state_dict(torch.load(f"{model_path}/mentor.pt", map_location="cpu"))
+#     mentor.eval()
 
-    embed_dim = 384 
+#     embed_dim = 384 
 
-    student = MLPStudent(
-        input_size=embed_dim,
-        hidden_size=256,
-        output_size=num_classes
-    )
-    student.load_state_dict(torch.load(f'{model_path}/student.pt', map_location="cpu"))
-    student.eval()
+#     student = MLPStudent(
+#         input_size=embed_dim,
+#         hidden_size=256,
+#         output_size=num_classes
+#     )
+#     student.load_state_dict(torch.load(f'{model_path}/student.pt', map_location="cpu"))
+#     student.eval()
 
-    return Trainer(
-        student=student,
-        mentor=mentor,
-        history_buffer=buffer,
-        device="cpu" 
-    )
+#     return Trainer(
+#         student=student,
+#         mentor=mentor,
+#         history_buffer=buffer,
+#         device="cpu" 
+#     )
 
 @tool
 def check_context() -> str:
@@ -82,61 +83,35 @@ def run_ml_inference_pipeline() -> str:
 
     dataset = HTTPLogDataset(df, label_map=LABEL_MAP)
     loader = DataLoader(dataset, batch_size=64, shuffle=False)
+
+    df = AnalysisContext.get_data_from_mongo()
     
-    try:
-        trainer = _load_trainer(traffic_source=traffic_source, num_samples=len(dataset))
-    except Exception as e:
-        return f"Error loading model for {traffic_source}: {str(e)}"
+    model_path = f"{MODELS_PATH}/{traffic_source}/mentor_net_bundle.pth"
+    mentor_predictor = MentorNetPredictor(artifact_path=model_path)
 
-    results = []
-    with torch.no_grad():
-        for batch in loader:
-            print(batch)
-            x = batch["x"]
-            y = batch["label"]
-            ids = batch["id"]
-            
-            logits, embeddings = trainer.student(x, return_embeddings=True)
-            preds = logits.argmax(dim=1)
-            raw_losses = trainer.student.get_individual_losses(logits, y)
-            
-            weights = torch.ones_like(raw_losses)
-            if trainer.mentor:
-                hist = trainer.history.get(ids)
-                epoch_vec = torch.full((len(y),), 99)
-                weights = trainer.mentor(hist, y, epoch_vec)
-                weights = torch.clamp(weights.view(-1), 0, 1)
+    loader = DataLoader(
+        dataset,
+        batch_size=64,
+        shuffle=False,
+        num_workers=0
+    )
 
-            ncs = trainer.get_neighborhood_score(embeddings, y, k=10)
-
-            for i in range(len(ids)):
-                results.append({
-                    "id": int(ids[i]),
-                    "true_label": int(y[i]),
-                    "model_pred": int(preds[i]),
-                    "loss": float(raw_losses[i]),
-                    "mentor_weight": float(weights[i]),
-                    "ncs": float(ncs[i]),
-                    "headers": df.loc[df.index == int(ids[i]), 'headers'].values[0] if 'headers' in df.columns else "N/A"
-
-                })
-
-    result_df = pd.DataFrame(results)
-    result_df["is_error"] = result_df["true_label"] != result_df["model_pred"]
+    df_results = mentor_predictor.predict(loader)
+    df_results["is_error"] = (df_results["target"] != df_results["pred"])
     
-    AnalysisContext.set_ml_results_data(result_df)
+    AnalysisContext.set_ml_results_data(df_results)
 
 
-    print(f"checando se a tool de inferencia salva dos dados: {len(AnalysisContext._df_ml_results)}")
+    print(f"checando se a tool de inferencia salva dos dados: {len(AnalysisContext.get_data_to_analise())}")
 
-    accuracy = (result_df["true_label"] == result_df["model_pred"]).mean()
-    total_errors = result_df["is_error"].sum()
+    accuracy = (df_results["target"] == df_results["pred"]).mean()
+    total_errors = df_results["is_error"].sum()
 
     return (
         f"Inference completed using '{traffic_source}' model with results: \n"
         f"Models Accuracy: {accuracy}"
         f"Total Error in prediction (possible anomalies): {total_errors}"
-        f"Analyzed {len(result_df)} samples.\n"
+        f"Analyzed {len(df_results)} samples.\n"
         "You can now now:\n"
         "1. Call 'get_dataset_health_check' to see overall performance stats.\n"
         "2. Call 'query_anomalous_ids' to extract specific samples for the Detective Agent."
@@ -152,9 +127,9 @@ def get_dataset_health_check() -> dict:
     df = AnalysisContext.get_data_to_analise()
     return {
         "total_samples": len(df),
-        "false_positives": int(((df.true_label==0) & (df.model_pred==1)).sum()),
-        "false_negatives": int(((df.true_label==1) & (df.model_pred==0)).sum()),
-        "avg_trust": float(df["mentor_weight"].mean())
+        "false_positives": int(((df.target==0) & (df.pred==1)).sum()),
+        "false_negatives": int(((df.target==1) & (df.pred==0)).sum()),
+        "avg_trust": float(df["weight"].mean())
     }
 
 @tool
@@ -168,11 +143,11 @@ def query_anomalous_ids(criteria: str, threshold: float = 0.5) -> list[int]:
     df = AnalysisContext.get_data_to_analise()
     
     if criteria == "low_trust":
-        subset = df[df["mentor_weight"] < threshold]
+        subset = df[df["weight"] < threshold]
     elif criteria == "high_loss":
         subset = df[df["loss"] > threshold]
     elif criteria == "disagreement":
-        subset = df[df["true_label"] != df["model_pred"]]
+        subset = df[df["target"] != df["pred"]]
     else:
         return []
 

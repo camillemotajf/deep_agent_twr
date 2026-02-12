@@ -131,6 +131,37 @@ async def traffic_source_by_campaign(
 
     return f"Success on setting traffic source in context. Traffic Source: {result}"
 
+@tool
+async def query_requests_for_training(
+    traffic_source: str | None = None,
+    hashes: list[str] | None = None,
+    limit: int = 10000
+) -> list[dict]:
+    """
+    Docstring para query_requests_for_training
+    
+    :param traffic_source: Descrição
+    :type traffic_source: str | None
+    :param hashes: Descrição
+    :type hashes: list[str] | None
+    :param limit: Descrição
+    :type limit: int
+    :return: Descrição
+    :rtype: list[dict]
+    """
+
+    if not traffic_source and not hashes:
+        return "Error: You must provide at least one of the oprions: traffic_source or hashes"
+    
+    elif traffic_source:
+        campaigns = await campaign_service.fetch_recent_active_campaigns(traffic_source=traffic_source, limit=50)
+    elif hashes:
+        campaigns = hashes
+    
+    results = await request_service.fetch_training_sample_by_hashes(campaigns)
+
+    return results
+
 
 @tool
 async def query_mongo_requests(
@@ -166,6 +197,11 @@ async def query_mongo_requests(
             return f"No data found in MongoDB for hashes: {final_hashes}"
 
         df = pd.DataFrame(results)
+
+        try:
+            AnalysisContext.clear_memory()
+        except Exception as e:
+            return f"Error on clear memory: {e}"
 
         AnalysisContext.set_mongo_data(
             df=df, 

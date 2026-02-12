@@ -19,3 +19,4 @@ matplotlib
 seaborn
 torch
 sentence_transformers
+psutil

@@ -16,9 +16,28 @@ class RequestService:
         """
         if not hashes:
             raise ValueError("At least one campaign hash is required")
-        
+                
         results =  self.repository.get_recent_requests_by_hashes(
             hashes=hashes,
             limit=limit
         )
+
         return results
+    
+    def fetch_training_sample_by_hashes(
+        self,
+        hashes: list[str],
+        limit_each: int = 10000
+    ) -> list[str]:
+        
+        if not hashes:
+            raise ValueError("")
+        
+
+        results = self.repository.get_training_sample_by_hashes(
+            hashes=hashes, 
+            limit_each=limit_each
+        )
+
+        return results
+    

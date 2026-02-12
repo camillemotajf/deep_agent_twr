@@ -14,6 +14,7 @@ from app.mentor_net.student_mlp import MLPStudent
 from app.mentor_net.trainer import Trainer
 from app.mentor_net.history_buffer import HistoryBuffer
 from app.mentor_net.http_data import HTTPLogDataset
+from app.tools.context_store import AnalysisContext
 
 
 MODELS_PATH = f"{os.getcwd()}/files"
@@ -48,7 +49,6 @@ def _load_trainer(traffic_source: str, num_samples: int):
 @tool
 async def run_ml_inference(
     traffic_source: str,
-    file_path: str | None = None,
 ) -> dict:
     """
     Executes MentorNet/Student ML inference to detect label noise and hidden bots.
@@ -61,16 +61,18 @@ async def run_ml_inference(
     :rtype: dict
     """
 
-    data = []
+    # data = []
 
-    if file_path and os.path.exists(file_path):
-        with open(file_path, "r") as f:
-            data = json_util.loads(f.read())
+    # if file_path and os.path.exists(file_path):
+    #     with open(file_path, "r") as f:
+    #         data = json_util.loads(f.read())
 
-    df = pd.DataFrame(data)
+    # df = pd.DataFrame(data)
 
-    if df.empty:
-        return {"error": "Empty Dataframe to analise"}
+    # if df.empty:
+    #     return {"error": "Empty Dataframe to analise"}
+
+    df = AnalysisContext.get_data_to_analise()
     
     dataset = HTTPLogDataset(df, label_map=LABEL_MAP)
 
@@ -133,6 +135,8 @@ async def run_ml_inference(
 def summarize_misclassifications(df: pd.DataFrame) -> dict:
     """
     Summarizes false positives and false negatives.
+    - false positives: true label = "bots" and pred label = "unsafe"
+    - false negatives: true label = "unsafe" and pred label = "bots"
     """
     fp = df[(df.true_label == 0) & (df.model_pred == 1)]
     fn = df[(df.true_label == 1) & (df.model_pred == 0)]

@@ -19,3 +19,13 @@ mongo_client = AsyncIOMotorClient(
 
 mongo_db = mongo_client[settings.DB_NAME]
 mongo_collection = mongo_db[settings.COL_REQUEST]
+
+print("Garantindo índices...")
+
+async def init_db_indexes():
+    print("Garantindo índices...")
+    await mongo_collection.create_index([
+        ("metadata.site", 1),
+        ("decision", 1),
+    ])
+    print("Índices criados!")

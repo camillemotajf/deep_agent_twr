@@ -15,54 +15,17 @@ from app.mentor_net.student_mlp import MLPStudent
 from app.mentor_net.trainer import Trainer
 from app.mentor_net.history_buffer import HistoryBuffer
 from app.mentor_net.http_data import HTTPLogDataset
+from app.services.embedding_service import EmbeddingService
 from app.tools.context_store import AnalysisContext
 
 
 MODELS_PATH = f"{os.getcwd()}/files/models"
 LABEL_MAP = {"bots": 0, "unsafe": 1}
+EMBEDDING_CONFIG = "fasttext"
+TRANSFORMER_MODEL = "intfloat/e5-base-v2"
+FATSTEXT_PATH = f"{MODELS_PATH}/embedding"
+BASE_MODEL_PATH = "files/models"
 
-
-# def _load_trainer(traffic_source: str, num_samples: int):
-#     model_path = f"{MODELS_PATH}/{traffic_source}"
-
-#     buffer = HistoryBuffer(
-#         num_samples=num_samples,
-#         window_size=10,
-#         feature_dim=3,
-#     )
-
-#     num_classes = 2
-
-#     mentor = MentorNet(
-#         input_size=3,       # Importante: [loss, diff, ncs]
-#         hidden_size=32,
-#         num_classes=num_classes,
-#     )
-#     mentor.load_state_dict(torch.load(f"{model_path}/mentor.pt", map_location="cpu"))
-#     mentor.eval()
-
-#     embed_dim = 384 
-
-#     student = MLPStudent(
-#         input_size=embed_dim,
-#         hidden_size=256,
-#         output_size=num_classes
-#     )
-#     student.load_state_dict(torch.load(f'{model_path}/student.pt', map_location="cpu"))
-#     student.eval()
-
-#     return Trainer(
-#         student=student,
-#         mentor=mentor,
-#         history_buffer=buffer,
-#         device="cpu" 
-#     )
-
-@tool
-def check_context() -> str:
-    """
-    Checks if the data info get by orchestrator was corrected loaded
-    """
 
 @tool
 def run_ml_inference_pipeline() -> str:
@@ -80,13 +43,27 @@ def run_ml_inference_pipeline() -> str:
 
     if df.empty:
         return "Error: Dataset is empty."
-
-    dataset = HTTPLogDataset(df, label_map=LABEL_MAP)
-    loader = DataLoader(dataset, batch_size=64, shuffle=False)
-
-    df = AnalysisContext.get_data_from_mongo()
     
-    model_path = f"{MODELS_PATH}/{traffic_source}/mentor_net_bundle.pth"
+    print("Embedding type: ", EMBEDDING_CONFIG)
+    if EMBEDDING_CONFIG == "fasttext":
+        model_path = FATSTEXT_PATH
+    else:
+        model_path = TRANSFORMER_MODEL
+
+    try:
+        EmbeddingService.get_instance(EMBEDDING_CONFIG, model_path, traffic_source=traffic_source)
+    except FileNotFoundError:
+        return f"Error: Embedding model not found at {model_path}"
+    
+    embeddings_matrix, texts = EmbeddingService.process_and_encode(
+        df
+    )
+    print(embeddings_matrix.shape)
+
+    dataset = HTTPLogDataset(df, label_map=LABEL_MAP, embeddings=embeddings_matrix, texts=texts)
+    loader = DataLoader(dataset, batch_size=64, shuffle=False)
+    
+    model_path = f"{MODELS_PATH}/{traffic_source}/mentor_net_bundle_{EMBEDDING_CONFIG}.pth"
     mentor_predictor = MentorNetPredictor(artifact_path=model_path)
 
     loader = DataLoader(

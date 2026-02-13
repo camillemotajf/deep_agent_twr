@@ -20,3 +20,5 @@ seaborn
 torch
 sentence_transformers
 psutil
+gensim
+user_agents

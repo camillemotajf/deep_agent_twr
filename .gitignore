@@ -3,3 +3,6 @@
 
 *.pem
 *.pt
+*.pth
+*.model.*
+*.model

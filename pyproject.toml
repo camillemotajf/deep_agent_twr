@@ -7,6 +7,7 @@ requires-python = ">=3.11"
 dependencies = [
     "aiomysql>=0.3.2",
     "deepagents>=0.3.12",
+    "gensim>=4.4.0",
     "langchain>=1.2.9",
     "langchain-experimental>=0.4.1",
     "langchain-google-genai>=4.2.0",
@@ -27,4 +28,5 @@ dependencies = [
     "sqlalchemy>=2.0.46",
     "torch>=2.10.0",
     "typing>=3.10.0.0",
+    "user-agents>=2.2.0",
 ]

@@ -22,3 +22,5 @@ sentence_transformers
 psutil
 gensim
 user_agents
+pytest
+cachetools

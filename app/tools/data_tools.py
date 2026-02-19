@@ -7,6 +7,16 @@ import pandas as pd
 from app.config.container import request_service
 from app.config.container import campaign_service
 from app.tools.context_store import AnalysisContext
+from app.tools.pydantic_models import (
+    QueryMongoRequestsInput, 
+    QueryMongoRequestsOutput,
+    QuerySqlCampaignsInput,
+    QuerySqlCampaignsOutput,
+    TrafficSourceByCampaignInput,
+    TrafficSourceByCampaignOutput,
+    QueryRequestsForTrainingInput,
+    QueryRequestsForTrainingOutput
+)
 
 DATA_DIR = os.path.join(os.getcwd(), "files", "data")
 
@@ -107,10 +117,10 @@ def check_context_status() -> str:
     """
     return AnalysisContext.get_status()
 
-@tool
+@tool(args_schema=TrafficSourceByCampaignInput)
 async def traffic_source_by_campaign(
-    hash: str
-) -> str:
+    **kwargs
+) -> TrafficSourceByCampaignOutput:
     """
     Gets the traffic source name for the campaign from its hash
     Use this when a hash is provided by user and it's necessary searching for the specific ML model.
@@ -121,22 +131,20 @@ async def traffic_source_by_campaign(
     :return: the name of the traffic source
     :rtype: str
     """
-
+    input_model = TrafficSourceByCampaignInput(**kwargs)
     try:
-        result = await campaign_service.fetch_traffic_source_by_hash(hash)
+        result = await campaign_service.fetch_traffic_source_by_hash(input_model.hash)
     except ValueError as e:
-        return f"Error getting the traffic source name for {hash} campaign"
+        return TrafficSourceByCampaignOutput(success=False, message=f"Error getting the traffic source name for {input_model.hash} campaign")
     
     AnalysisContext.set_traffic_source(result)
 
-    return f"Success on setting traffic source in context. Traffic Source: {result}"
+    return TrafficSourceByCampaignOutput(success=True, traffic_source=result, message=f"Success on setting traffic source in context. Traffic Source: {result}")
 
-@tool
+@tool(args_schema=QueryRequestsForTrainingInput)
 async def query_requests_for_training(
-    traffic_source: str | None = None,
-    hashes: list[str] | None = None,
-    limit: int = 10000
-) -> list[dict]:
+    **kwargs
+) -> QueryRequestsForTrainingOutput:
     """
     Docstring para query_requests_for_training
     
@@ -149,27 +157,24 @@ async def query_requests_for_training(
     :return: Descrição
     :rtype: list[dict]
     """
-
-    if not traffic_source and not hashes:
-        return "Error: You must provide at least one of the oprions: traffic_source or hashes"
+    input_model = QueryRequestsForTrainingInput(**kwargs)
+    if not input_model.traffic_source and not input_model.hashes:
+        return QueryRequestsForTrainingOutput(success=False, message="Error: You must provide at least one of the oprions: traffic_source or hashes")
     
-    elif traffic_source:
-        campaigns = await campaign_service.fetch_recent_active_campaigns(traffic_source=traffic_source, limit=50)
-    elif hashes:
-        campaigns = hashes
+    elif input_model.traffic_source:
+        campaigns = await campaign_service.fetch_recent_active_campaigns(traffic_source=input_model.traffic_source, limit=50)
+    elif input_model.hashes:
+        campaigns = input_model.hashes
     
     results = await request_service.fetch_training_sample_by_hashes(campaigns)
 
-    return results
+    return QueryRequestsForTrainingOutput(success=True, results=results)
 
 
-@tool
+@tool(args_schema=QueryMongoRequestsInput)
 async def query_mongo_requests(
-    traffic_source: str,
-    hash: str | None = None,
-    hashes: list[str] | None = None,
-    limit: int = 1000
-) -> list[dict]:
+    **kwargs
+) -> QueryMongoRequestsOutput:
     """
     Retrieves recent MongoDB HTTP requests and saves them to a temporary file.
     Returns the file path to be used by analysis tools.
@@ -180,64 +185,70 @@ async def query_mongo_requests(
     - Use 'hashes' for multiple campaigns
     - Returns only requests with decision bots or unsafe
     """
+    
+    input_model = QueryMongoRequestsInput(**kwargs)
 
-    final_hashes = hashes or ([hash] if hash else [])
+    final_hashes = input_model.hashes or ([input_model.hash] if input_model.hash else [])
 
     if not final_hashes:
-        return "Error: You must provide at least one 'hash' or a list of 'hashes'."
+        return QueryMongoRequestsOutput(success=False, message="Error: You must provide at least one 'hash' or a list of 'hashes'.")
 
     try:
         cursor = await request_service.fetch_recent_flagged_requests(
             hashes=final_hashes,
-            limit=limit
+            limit=input_model.limit
         )
-        results = await cursor.to_list(length=limit)
+        results = await cursor.to_list(length=input_model.limit)
 
         if not results:
-            return f"No data found in MongoDB for hashes: {final_hashes}"
+            return QueryMongoRequestsOutput(success=False, message=f"No data found in MongoDB for hashes: {final_hashes}")
 
         df = pd.DataFrame(results)
 
         try:
             AnalysisContext.clear_memory()
         except Exception as e:
-            return f"Error on clear memory: {e}"
+            return QueryMongoRequestsOutput(success=False, message=f"Error on clear memory: {e}")
 
         AnalysisContext.set_mongo_data(
             df=df, 
-            source=traffic_source, 
+            source=input_model.traffic_source, 
         )
 
-        return (
-            f"SUCCESS: Loaded {len(df)} requests into AnalysisContext.\n"
-            f"Sources: {traffic_source} | Hashes: {len(final_hashes)}\n"
-            "Action Required: Delegate to 'Metrics Analyst' agent to run ML inference now."
+        return QueryMongoRequestsOutput(
+            success=True,
+            message=(
+                f"SUCCESS: Loaded {len(df)} requests into AnalysisContext.\n"
+                f"Sources: {input_model.traffic_source} | Hashes: {len(final_hashes)}\n"
+                "Action Required: Delegate to 'Metrics Analyst' agent to run ML inference now."
+            ),
+            num_requests=len(df)
         )
 
     except Exception as e:
-        return f"Error loading data from Mongo: {str(e)}"
+        return QueryMongoRequestsOutput(success=False, message=f"Error loading data from Mongo: {str(e)}")
 
-@tool
+@tool(args_schema=QuerySqlCampaignsInput)
 async def query_sql_campaigns(
-    traffic_source: str | None = None,
-    limit: int = 10
-) -> list[str]:
+    **kwargs
+) -> QuerySqlCampaignsOutput:
     """    
     Use this tool when the user asks to analyze traffic but doesn't provide a specific hash.
     It returns a list of available campaign hashes and their metadata.
     
     Returns: A list of campaigns hashes to use query_mongo_requests to search for their data.
     """
+    input_model = QuerySqlCampaignsInput(**kwargs)
     try:
         campaigns = await campaign_service.fetch_recent_active_campaigns(
-            traffic_source=traffic_source,
-            limit=limit
+            traffic_source=input_model.traffic_source,
+            limit=input_model.limit
         )
         
         if not campaigns:
-            return f"No active campaigns found for source: {traffic_source}."
+            return QuerySqlCampaignsOutput(success=False, message=f"No active campaigns found for source: {input_model.traffic_source}.")
 
-        return campaigns
+        return QuerySqlCampaignsOutput(success=True, campaigns=campaigns)
 
     except Exception as e:
-        return [f"Error querying SQL: {str(e)}"]
+        return QuerySqlCampaignsOutput(success=False, message=f"Error querying SQL: {str(e)}")

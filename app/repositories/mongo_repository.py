@@ -1,4 +1,5 @@
 import asyncio
+from app.config.mongo import mongo_collection
 
 class MongoRepository:
       def __init__(self, collection):

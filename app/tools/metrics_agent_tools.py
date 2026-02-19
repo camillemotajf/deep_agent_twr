@@ -2,6 +2,7 @@ from langchain.tools import tool
 import pandas as pd
 import json
 from bson import json_util
+from sklearn.metrics import silhouette_score
 import torch
 from torch.utils.data import DataLoader
 import os
@@ -17,6 +18,15 @@ from app.mentor_net.history_buffer import HistoryBuffer
 from app.mentor_net.http_data import HTTPLogDataset
 from app.services.embedding_service import EmbeddingService
 from app.tools.context_store import AnalysisContext
+from app.tools.settings import settings
+
+from gensim.models import FastText
+
+from datetime import datetime
+from cachetools import cached, TTLCache
+from cachetools.keys import hashkey
+
+from functools import lru_cache
 
 
 MODELS_PATH = f"{os.getcwd()}/files/models"
@@ -26,60 +36,122 @@ TRANSFORMER_MODEL = "intfloat/e5-base-v2"
 FATSTEXT_PATH = f"{MODELS_PATH}/embedding"
 BASE_MODEL_PATH = "files/models"
 
+cache_melhor_modelo = TTLCache(maxsize=50, ttl=86400)
+
+def chave_por_traffic_source(traffic_source):
+    return hashkey(traffic_source)
+
+
+@lru_cache(maxsize=2)
+def get_cached_mentor_predictor(artifact_path: str, device: str = "cpu"):
+    print(f"⏳ [CACHE MISS] Instanciando e carregando MentorNetPredictor do disco: {artifact_path}...")
+    
+    # 1. Libera o datetime para o PyTorch ANTES de o __init__ fazer o load
+    torch.serialization.add_safe_globals([datetime]) 
+    
+    # 2. Instancia a classe (isso vai chamar o __init__ e ler o arquivo)
+    predictor = MentorNetPredictor(artifact_path=artifact_path, device=device)
+    
+    return predictor
 
 @tool
-def run_ml_inference_pipeline() -> str:
+@cached(cache=cache_melhor_modelo, key=chave_por_traffic_source) 
+def choose_emb_conf(traffic_source: str) -> dict:
+    """
+    Choose the best emb conf
+    """
+    print(f"{settings.MODELS_PATH}/{traffic_source}")
+    embedding_types = {
+        "fasttext": f"{settings.MODELS_PATH}/{traffic_source}",
+        "transformers": settings.TRANSFORMER_MODEL
+    }
+    results = {}
+    for emb_type, model in embedding_types.items():
+
+        EmbeddingService.clear_instance()
+        EmbeddingService.get_instance(emb_type, model, traffic_source=traffic_source)
+        print(EmbeddingService.return_instance())
+
+        df = AnalysisContext.get_data_from_mongo()
+        embeddings_matrix, texts = EmbeddingService.process_and_encode(df)
+
+        try:
+            metric_val = silhouette_score(embeddings_matrix, df['decision']) 
+        except:
+            metric_val = 0
+        
+        print(f"Metric val for {emb_type}: {metric_val}")
+
+        results[emb_type] = metric_val
+        print(f"Score para {emb_type}: {metric_val}")
+
+    best_emb_conf = max(results, key=results.get)
+    result_final = embedding_types.get(best_emb_conf)
+
+    best_emb_key = max(results, key=results.get)
+    best_model_path = embedding_types.get(best_emb_key)
+
+    resultado_final = {
+        "emb_conf": best_emb_key,
+        "model_path": best_model_path
+    }
+    
+    print(f"Melhor modelo: {best_emb_key} | Caminho/Config: {best_model_path}")
+
+    EmbeddingService.clear_instance()
+    EmbeddingService.get_instance(best_emb_key, best_model_path, traffic_source=traffic_source)
+    
+    # 3. Retorna exatamente o que você pediu: o valor do dicionário
+    return resultado_final
+
+@tool
+def run_ml_inference_pipeline(emb_conf: dict) -> str:
     """
     EXECUTE FIRST. Runs ML inference on data currently in Global Context.
     PREREQUISITE: Orchestrator must have loaded data.
     ARGS: None.
     RETURNS: Summary string. Updates internal state for queries.
     """
+    conf = emb_conf.get("emb_conf")
+    model_path = emb_conf.get("model_path")
+
     try:
-      df = AnalysisContext.get_data_from_mongo()
-      traffic_source = AnalysisContext.get_traffic_source()
+        df = AnalysisContext.get_data_from_mongo()
+        traffic_source = AnalysisContext.get_traffic_source()
+        print(traffic_source)
     except ValueError as e:
-      return f"Error: No data loaded. Ask the Orchestrator to load a file first. ({e})"
+        return f"Error: No data loaded. Ask the Orchestrator to load a file first. ({e})"
 
     if df.empty:
         return "Error: Dataset is empty."
     
-    print("Embedding type: ", EMBEDDING_CONFIG)
-    if EMBEDDING_CONFIG == "fasttext":
-        model_path = FATSTEXT_PATH
-    else:
-        model_path = TRANSFORMER_MODEL
+    print("Embedding type: ", conf)
 
-    try:
-        EmbeddingService.get_instance(EMBEDDING_CONFIG, model_path, traffic_source=traffic_source)
-    except FileNotFoundError:
-        return f"Error: Embedding model not found at {model_path}"
+    # if conf == "fasttext":
+    #     model_path = FATSTEXT_PATH
+    # else:
+    #     model_path = TRANSFORMER_MODEL
+
+    # try:
+    #     EmbeddingService.get_instance(conf, model_path, traffic_source=traffic_source)
+    # except FileNotFoundError:
+    #     return f"Error: Embedding model not found at {model_path}"
     
-    embeddings_matrix, texts = EmbeddingService.process_and_encode(
-        df
-    )
-    print(embeddings_matrix.shape)
-
+    embeddings_matrix, texts = EmbeddingService.process_and_encode(df)
     dataset = HTTPLogDataset(df, label_map=LABEL_MAP, embeddings=embeddings_matrix, texts=texts)
     loader = DataLoader(dataset, batch_size=64, shuffle=False)
+    torch.serialization.add_safe_globals([datetime])
     
-    model_path = f"{MODELS_PATH}/{traffic_source}/mentor_net_bundle_{EMBEDDING_CONFIG}.pth"
-    mentor_predictor = MentorNetPredictor(artifact_path=model_path)
+    model_path = f"{settings.MODELS_PATH}/{traffic_source}/{conf}/mentor_net_bundle.pth"
 
-    loader = DataLoader(
-        dataset,
-        batch_size=64,
-        shuffle=False,
-        num_workers=0
-    )
+    mentor_predictor = get_cached_mentor_predictor(artifact_path=model_path, device="cpu")
+
+    # mentor_predictor = MentorNetPredictor(artifact_path=model_path)
 
     df_results = mentor_predictor.predict(loader)
     df_results["is_error"] = (df_results["target"] != df_results["pred"])
     
     AnalysisContext.set_ml_results_data(df_results)
-
-
-    print(f"checando se a tool de inferencia salva dos dados: {len(AnalysisContext.get_data_to_analise())}")
 
     accuracy = (df_results["target"] == df_results["pred"]).mean()
     total_errors = df_results["is_error"].sum()
@@ -127,5 +199,8 @@ def query_anomalous_ids(criteria: str, threshold: float = 0.5) -> list[int]:
         subset = df[df["target"] != df["pred"]]
     else:
         return []
+    
+    print(f"Found {len(subset)} samples matching criteria '{criteria}' with threshold {threshold}.")
+    print(subset[["weight", "loss", "target", "pred", 'ncs']].head())
 
-    return subset["id"].head(50).tolist()
+    return subset["_id"].head(50).tolist()

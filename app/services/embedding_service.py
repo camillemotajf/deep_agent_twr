@@ -1,3 +1,4 @@
+from functools import lru_cache
 import os
 import ast
 import re
@@ -9,9 +10,22 @@ from typing import List, Union, Tuple
 from sentence_transformers import SentenceTransformer
 from gensim.models import FastText
 from tqdm import tqdm
-
 from app.utils.http_tokens_ft import create_X_embedding_ft, create_vocabulary
 
+
+@lru_cache(maxsize=2)
+def load_cached_embedder(model_path: str, emb_type: str):
+    print(f"⏳ [CACHE MISS] Lendo Embedding do disco: {model_path}...")
+    
+    if emb_type == "fasttext":
+        return FastText.load(model_path)
+        
+    elif emb_type == "transformers":
+        return torch.load(model_path, weights_only=True) 
+        
+    else:
+        raise ValueError(f"Tipo de embedding desconhecido: {emb_type}")
+    
 class BaseEmbedder(ABC):
     @abstractmethod
     def encode(self, df: pd.DataFrame) -> np.ndarray:
@@ -111,7 +125,8 @@ class FastTextEmbedder(BaseEmbedder):
             self.model_path = f"{model_path}/fasttext_{traffic_source}.model"
 
             print(f'[DEBUG] Model Path FASTTEXT: {self.model_path}')
-            self.model = FastText.load(self.model_path)
+            # self.model = FastText.load(self.model_path)
+            self.model = load_cached_embedder(self.model_path, emb_type="fasttext")
             self.wv = self.model.wv
             self.texts = None
             self.traffic_source = traffic_source
@@ -144,6 +159,14 @@ class EmbeddingService:
       def __init__(cls):
             cls.text = None
             cls.embedding = None
+
+      @classmethod
+      def return_instance(cls):
+            return cls._instance
+      
+      @classmethod
+      def clear_instance(cls):
+            cls._instance = None
 
       @classmethod
       def get_instance(cls, config_type: str, path_or_name: str, traffic_source: str = None) -> BaseEmbedder:

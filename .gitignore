@@ -1,6 +1,5 @@
 .venv 
 .env
-
 *.pem
 *.pt
 *.pth

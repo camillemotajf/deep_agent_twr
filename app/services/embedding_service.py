@@ -26,6 +26,14 @@ def load_cached_embedder(model_path: str, emb_type: str):
     else:
         raise ValueError(f"Tipo de embedding desconhecido: {emb_type}")
     
+@lru_cache(maxsize=1)
+def get_cached_sentence_transformer(model_name_or_path: str, device: str = "cpu"):
+    print(f"⏳ [CACHE MISS] Carregando SentenceTransformer pesadão: {model_name_or_path}...")
+    
+    model = SentenceTransformer(model_name_or_path, device=device)
+    
+    return model
+    
 class BaseEmbedder(ABC):
     @abstractmethod
     def encode(self, df: pd.DataFrame) -> np.ndarray:
@@ -48,7 +56,8 @@ class TransformerEmbedder(BaseEmbedder):
             else:
                   self.device = device
             
-            self.model = SentenceTransformer(model_name, device=self.device)
+            # self.model = SentenceTransformer(model_name, device=self.device)
+            self.model = get_cached_sentence_transformer(model_name, device)
             self.texts = None
 
       def _clean_to_dict(self, val):

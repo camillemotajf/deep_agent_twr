@@ -1,5 +1,4 @@
 import asyncio
-from app.config.mongo import mongo_collection
 
 class MongoRepository:
       def __init__(self, collection):
@@ -20,7 +19,8 @@ class MongoRepository:
                   "request": True,
                   "decision": True,
                   '_id': True,
-                  "datetime": True
+                  "datetime": True,
+                  "ip": True
             }      
 
             cursor = (

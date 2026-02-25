@@ -10,6 +10,7 @@ from typing import List, Union, Tuple
 from sentence_transformers import SentenceTransformer
 from gensim.models import FastText
 from tqdm import tqdm
+
 from app.utils.http_tokens_ft import create_X_embedding_ft, create_vocabulary
 
 
@@ -131,11 +132,10 @@ class FastTextEmbedder(BaseEmbedder):
             if not os.path.exists(model_path):
                   raise FileNotFoundError(f"Fast Text model not found: {model_path}")
             
-            self.model_path = f"{model_path}/fasttext_{traffic_source}.model"
+            self.model_path = model_path
 
             print(f'[DEBUG] Model Path FASTTEXT: {self.model_path}')
-            # self.model = FastText.load(self.model_path)
-            self.model = load_cached_embedder(self.model_path, emb_type="fasttext")
+            self.model = FastText.load(self.model_path)
             self.wv = self.model.wv
             self.texts = None
             self.traffic_source = traffic_source
@@ -168,14 +168,6 @@ class EmbeddingService:
       def __init__(cls):
             cls.text = None
             cls.embedding = None
-
-      @classmethod
-      def return_instance(cls):
-            return cls._instance
-      
-      @classmethod
-      def clear_instance(cls):
-            cls._instance = None
 
       @classmethod
       def get_instance(cls, config_type: str, path_or_name: str, traffic_source: str = None) -> BaseEmbedder:

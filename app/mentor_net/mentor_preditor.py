@@ -1,5 +1,9 @@
+import datetime
+
 import torch
 import torch.nn.functional as F
+
+torch.serialization.add_safe_globals([datetime.datetime])
 
 from app.mentor_net.mentornet import MentorNet
 from app.mentor_net.student_mlp import MLPStudent
@@ -10,6 +14,8 @@ class MentorNetPredictor:
         
         checkpoint = torch.load(artifact_path, map_location=device)
         config = checkpoint["config"]
+
+        print(config)
    
         self.student = MLPStudent(
             input_size=config["embed_dim"], 

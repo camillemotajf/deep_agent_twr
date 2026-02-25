@@ -75,6 +75,9 @@ def run_ml_inference_pipeline() -> str:
         accuracy = 0.0
         total_errors = 0
 
+    df_fp = df_results[(df_results["decision"] == "unsafe") & (df_results["pred"] == "bots")]
+    df_fn = df_results[(df_results["decision"] == "bots") & (df_results["pred"] == "unsafe")]
+
     AnalysisContext.set_ml_results_data(df_results)
 
     print(f"Checando se a tool de inferência salva os dados: {len(AnalysisContext.get_data_to_analise())}")
@@ -83,7 +86,9 @@ def run_ml_inference_pipeline() -> str:
         f"Inference completed using MIL '{traffic_source}' model.\n"
         f"- Analyzed: {len(df_results)} samples.\n"
         f"- Model Accuracy: {accuracy * 100:.2f}%\n"
-        f"- Total prediction discrepancies (possible camouflaged bots): {total_errors}\n\n"
+        f"- Total prediction discrepancies: {total_errors}\n"
+        f"- Total False Positives (real = unsafe | pred = bots): {len(df_fp)}\n"
+        f"- Total False Negatives (real = bots | pred = unsafe): {len(df_fn)}\n\n"
         "You can now:\n"
         "1. Call 'get_dataset_health_check' to see overall performance stats.\n"
         "2. Call 'query_anomalous_ids' to extract specific samples for the Detective Agent."

@@ -18,7 +18,7 @@ class MongoRepository:
                   "headers": True,
                   "request": True,
                   "decision": True,
-                  '_id': True,
+                  'ip_api_isp': True,
                   "datetime": True,
                   "ip": True
             }      

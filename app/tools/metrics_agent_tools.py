@@ -18,6 +18,7 @@ from app.mentor_net.http_data import HTTPLogDataset
 from app.services.embedding_service import EmbeddingService
 from app.tools.context_store import AnalysisContext
 from app.services.mil_ia_service import ModelService
+from app.config.settings import settings
 
 
 MODELS_PATH = f"G:/Meu Drive/TWR/data"
@@ -54,30 +55,41 @@ def run_ml_inference_pipeline() -> str:
             emb_config=EMBEDDING_CONFIG,
         )
     except Exception as e:
-        return "Erro ao chamar o ModelService"
+        return f"Erro ao chamar o ModelService: {e}"
 
     try:
+        # Se o seu método no serviço ainda tiver 'async def', adicione o 'await' antes de inference_service
         df_results = inference_service.predict(df)
-        print(df_results.head())
+        print("Amostra dos resultados:")
+        print(df_results[['ip', 'bag_id', 'pred', 'certeza_bag']].head())
     except Exception as e:
         return f"Error during ML inference execution: {e}"
     
+    # === AQUI ESTÁ A MUDANÇA CRUCIAL ===
     if "decision" in df_results.columns:
+        # 1. Padroniza o texto do banco e converte para números (1 = bots, 0 = unsafe)
         df_results["target"] = df_results["decision"].str.lower().replace({"bot": "bots"}).map({"bots": 1, "unsafe": 0})
-        df_results["is_error"] = (df_results["decision"] != df_results["pred"])
-        print("Analisando resultados: ")
-        print(df_results.head())
         
-        accuracy = (df_results["decision"] == df_results["pred"]).mean()
+        df_results["is_error"] = (df_results["target"] != df_results["pred"])
+        accuracy = (df_results["target"] == df_results["pred"]).mean()
         total_errors = df_results["is_error"].sum()
+        
+        # 3. FP e FN também usam a lógica matemática (1 e 0)
+        # Falso Positivo: Era humano (0), mas o modelo disse Bot (1)
+        df_fp = df_results[(df_results["target"] == 0) & (df_results["pred"] == 1)]
+        # Falso Negativo: Era bot (1), mas o modelo disse Humano (0)
+        df_fn = df_results[(df_results["target"] == 1) & (df_results["pred"] == 0)]
+        
+        qtd_fp = len(df_fp)
+        qtd_fn = len(df_fn)
     else:
         df_results["is_error"] = False
         accuracy = 0.0
         total_errors = 0
+        qtd_fp = 0
+        qtd_fn = 0
 
-    df_fp = df_results[(df_results["decision"] == "unsafe") & (df_results["pred"] == "bots")]
-    df_fn = df_results[(df_results["decision"] == "bots") & (df_results["pred"] == "unsafe")]
-
+    # Salva o dataframe processado no contexto
     AnalysisContext.set_ml_results_data(df_results)
 
     print(f"Checando se a tool de inferência salva os dados: {len(AnalysisContext.get_data_to_analise())}")
@@ -87,8 +99,8 @@ def run_ml_inference_pipeline() -> str:
         f"- Analyzed: {len(df_results)} samples.\n"
         f"- Model Accuracy: {accuracy * 100:.2f}%\n"
         f"- Total prediction discrepancies: {total_errors}\n"
-        f"- Total False Positives (real = unsafe | pred = bots): {len(df_fp)}\n"
-        f"- Total False Negatives (real = bots | pred = unsafe): {len(df_fn)}\n\n"
+        f"- Total False Positives (real = unsafe | pred = bots): {qtd_fp}\n"
+        f"- Total False Negatives (real = bots | pred = unsafe): {qtd_fn}\n\n"
         "You can now:\n"
         "1. Call 'get_dataset_health_check' to see overall performance stats.\n"
         "2. Call 'query_anomalous_ids' to extract specific samples for the Detective Agent."

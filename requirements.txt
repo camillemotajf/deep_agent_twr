@@ -22,3 +22,6 @@ sentence_transformers
 psutil
 gensim
 user_agents
+boto3
+pytz
+botocore

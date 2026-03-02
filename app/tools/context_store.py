@@ -3,20 +3,22 @@ from datetime import datetime
 import gc
 import os
 import pandas as pd
-from typing import Optional
+from typing import Optional, List
 
 # _ctx_mongo_df = ContextVar("mongo_df", default=None)
 # _ctx_ml_results = ContextVar("ml_results", default=None)
 # _ctx_source = ContextVar("traffic_source", default=None)
 
 class AnalysisContext:
+    _hashes: Optional[List[str]] = None
     _df_mongo_results: Optional[pd.DataFrame] = None  
     _df_ml_results: Optional[pd.DataFrame] = None     
     _traffic_source: Optional[str] = None
     _file_loaded: Optional[str] = None
 
     @classmethod
-    def set_mongo_data(cls, df: pd.DataFrame, source: str):
+    def set_mongo_data(cls, df: pd.DataFrame, source: str, hashes: str):
+        cls._hashes = hashes
         cls._df_mongo_results = df
         cls._traffic_source = source
         cls._df_ml_results = None
@@ -38,6 +40,12 @@ class AnalysisContext:
         if cls._df_mongo_results is None:
             raise ValueError("Context Error: No Mongo data loaded yet.")
         return cls._df_mongo_results
+    
+    @classmethod
+    def get_hashes(cls) -> List[str]:
+        if cls._hashes is None:
+            raise ValueError("Context Error: no hashes saved from context")
+        return cls._hashes
 
     @classmethod
     def get_data_to_analise(cls) -> pd.DataFrame:

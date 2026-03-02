@@ -205,7 +205,8 @@ async def query_mongo_requests(
 
         AnalysisContext.set_mongo_data(
             df=df, 
-            source=traffic_source, 
+            hashes=final_hashes,
+            source=traffic_source
         )
 
         return (

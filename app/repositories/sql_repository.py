@@ -1,3 +1,5 @@
+from typing import List
+
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy import String, Boolean, DateTime, select, Integer
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,6 +27,38 @@ class TrafficSource(Base):
 class CampaignRepository:
     def __init__(self, session_factory):
         self.session_factory = session_factory
+    
+    async def get_recent_active_campaign_hashes_excluding(
+        self,
+        excluded_hashes: list[str],
+        limit: int = 10,
+        traffic_source: str | None = None,
+    ) -> list[str]:
+
+        async with self.session_factory() as session:
+
+            stmt = (
+                select(Campaign.hash)
+                .where(Campaign.active.is_(True))
+                .where(~Campaign.hash.in_(excluded_hashes))
+                .order_by(Campaign.created_at.desc())
+                .limit(limit)
+            )
+
+            if traffic_source:
+                tf_query = (
+                    select(TrafficSource.traffic_sources_pk)
+                    .where(TrafficSource.traffic_source == traffic_source)
+                )
+                tf_fk = (await session.execute(tf_query)).scalar_one_or_none()
+
+                if tf_fk is not None:
+                    stmt = stmt.where(Campaign.traffic_sources_fk == tf_fk)
+                else:
+                    return []
+
+            result = await session.execute(stmt)
+            return result.scalars().all()
 
     async def get_recent_active_campaign_hashes(
         self,

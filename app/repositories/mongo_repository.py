@@ -1,4 +1,5 @@
 import asyncio
+from typing import Dict, List
 
 class MongoRepository:
       def __init__(self, collection):
@@ -38,14 +39,15 @@ class MongoRepository:
             return cursor
       
 
-      async def get_training_sample_by_hashes(self, hashes: list[str], limit_each: int = 10000) -> list[dict]:
+      async def get_training_sample_by_hashes(self, hashes: list[str], limit_each: int = 10000) -> List[Dict]:
 
             projection = {
                   "headers": True,
                   "request": True,
                   "decision": True,
-                  '_id': True,
-                  "datetime": True
+                  "ip_api_isp": True,
+                  "datetime": True,
+                  "ip": True
             } 
 
             query_bots = {

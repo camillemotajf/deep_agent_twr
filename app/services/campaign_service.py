@@ -1,3 +1,5 @@
+from typing import List
+
 from app.repositories.sql_repository import CampaignRepository
 
 class CampaignService:
@@ -20,4 +22,15 @@ class CampaignService:
     ) -> str:
         return await self.repository.get_traffic_source_by_hash(
             hash=hash
+        )
+    async def fetch_recent_active_campaign_hashes_excluding(
+            self,
+            traffic_source: str,
+            excluded_hashes: List[str],
+            limit: int = 10
+    ) -> str:
+        return await self.repository.get_recent_active_campaign_hashes_excluding(
+            excluded_hashes=excluded_hashes,
+            limit=limit,
+            traffic_source=traffic_source
         )

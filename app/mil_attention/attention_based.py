@@ -1,5 +1,6 @@
 import sys
 import logging
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -48,7 +49,8 @@ class AttentionMIL(nn.Module):
         
         Y_prob = self.classifier(z)
         return Y_prob, A
-
+  
+    
 class MILBagDatasetLogical(Dataset):
 
     def __init__(self, df_bags):
@@ -57,8 +59,11 @@ class MILBagDatasetLogical(Dataset):
         self.ips = []
         
         for _, row in df_bags.iterrows():
-            bag_tensor = torch.tensor(row["embedding"], dtype=torch.float32)
-            label_tensor = torch.tensor([row["bag_label"]], dtype=torch.float32)
+            bag_array = np.array(row["embedding"]) 
+            bag_tensor = torch.tensor(bag_array, dtype=torch.float32)
+
+            label_array = np.array(row["bag_label"])
+            label_tensor = torch.tensor(label_array, dtype=torch.float32)
             
             self.bags.append(bag_tensor)
             self.bag_labels.append(label_tensor)

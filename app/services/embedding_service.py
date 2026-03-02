@@ -128,13 +128,21 @@ class TransformerEmbedder(BaseEmbedder):
             return self.model.get_sentence_embedding_dimension()
 
 class FastTextEmbedder(BaseEmbedder):
-      def __init__(self, model_path: str, traffic_source: str):
-            if not os.path.exists(model_path):
-                  raise FileNotFoundError(f"Fast Text model not found: {model_path}")
+      def __init__(self, model_path: str, traffic_source: str, repo_s3):
+            print(f"[INFO] FastText model não encontrado em {model_path}. Tentando buscar do S3...")
             
-            self.model_path = model_path
+            # if repo_s3:
+            #     os.makedirs(os.path.dirname(model_path), exist_ok=True)
+            #     repo_s3.sync_model(local_path=model_path, is_base_embedding=True)
+            # else:
+            #     raise FileNotFoundError(f"Modelo ausente em {model_path} e nenhum repo_s3 fornecido para download.")
+            
+            # if not os.path.exists(model_path):
+            #       raise FileNotFoundError(f"Falha crítica: O modelo não foi encontrado e o download do S3 falhou para a rota: {model_path}")
 
+            self.model_path = model_path
             print(f'[DEBUG] Model Path FASTTEXT: {self.model_path}')
+
             self.model = FastText.load(self.model_path)
             self.wv = self.model.wv
             self.texts = None
@@ -170,14 +178,14 @@ class EmbeddingService:
             cls.embedding = None
 
       @classmethod
-      def get_instance(cls, config_type: str, path_or_name: str, traffic_source: str = None) -> BaseEmbedder:
+      def get_instance(cls, config_type: str, path_or_name: str, repo_s3 = None, traffic_source: str = None) -> BaseEmbedder:
             if cls._instance is not None:
                   return cls._instance
 
             if config_type == "transformers":
                   cls._instance = TransformerEmbedder(model_name=path_or_name)
             elif config_type == "fasttext":
-                  cls._instance = FastTextEmbedder(model_path=path_or_name, traffic_source=traffic_source)
+                  cls._instance = FastTextEmbedder(model_path=path_or_name, traffic_source=traffic_source, repo_s3=repo_s3)
             else:
                   raise ValueError("Tipo inválido. Use 'transformer' ou 'fasttext'.")
             return cls._instance

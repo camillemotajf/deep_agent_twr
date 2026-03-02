@@ -5,7 +5,6 @@ from botocore.exceptions import ClientError
 import pytz
 from app.config.settings import settings
 
-BASE_W2V_PATH = os.path.basename(settings.WORD2VEC_MODEL)
 
 class ModelRepository:
       def __init__(self):
@@ -24,43 +23,94 @@ class ModelRepository:
             
 
       def sync_model(self, local_path: str, is_base_embedding: bool = False, traffic_source: str = None, emb_config: str = None) -> bool:
-            
-            prefix_prod = self._get_s3_prefix(traffic_source=traffic_source, emb_config=emb_config, env="prod")
+            prefix_prod = self._get_s3_prefix(traffic_source=traffic_source, is_base_embedding=is_base_embedding, emb_config=emb_config, env="prod")
 
             try:
                   response = self.s3_client.list_objects_v2(Bucket=self.bucket_name, Prefix=prefix_prod)
-                  raw_contents = response["Contents"]
-
-                  valid_files = [
-                        obj for obj in raw_contents 
-                        if not obj['Key'].endswith('/') and obj['Size'] > 0
-                  ]
-
-                  if not valid_files:
+                  
+                  if "Contents" not in response:
                         print("Not valid archives in s3")
                         return False
 
-                  
-                  latest_obj = sorted(valid_files, key=lambda x: x['LastModified'], reverse=True)[0]
-                  s3_key = latest_obj['Key']
-                  s3_last_modified = latest_obj['LastModified']
-                  print("Modelo last modified no s3: ", s3_last_modified)
+                  raw_contents = response["Contents"]
 
-                  if os.path.exists(local_path):
-                        local_timestamp = os.path.getmtime(local_path)
-                        local_last_modified = datetime.fromtimestamp(local_timestamp, tz=pytz.utc)
+                  # ==========================================
+                  # LÓGICA 1: MODELOS DE EMBEDDING (Vários arquivos)
+                  # ==========================================
+                  if is_base_embedding:
+                        base_model_name = os.path.basename(local_path)
+                        local_dir = os.path.dirname(local_path)
 
-                        if local_last_modified >= s3_last_modified:
-                              print("Local file already updated")
-                              return True
-                  # cria a pasta se não tiver
-                  os.makedirs(os.path.dirname(local_path), exist_ok=True)
-                  self.s3_client.download_file(self.bucket_name, s3_key, local_path)
-                  print(f"Updating model from s3: {s3_key} -> {local_path}")
-                  return True
+                        model_files = [
+                              obj for obj in raw_contents 
+                              if not obj['Key'].endswith('/') and obj['Size'] > 0 and base_model_name in obj['Key']
+                        ]
+
+                        if not model_files:
+                              print(f"Nenhum arquivo encontrado no S3 para o modelo: {base_model_name}")
+                              return False
+
+                        os.makedirs(local_dir, exist_ok=True)
+
+                        for s3_obj in model_files:
+                              s3_key = s3_obj['Key']
+                              s3_last_modified = s3_obj['LastModified']
+                              s3_filename = os.path.basename(s3_key)
+                              specific_local_path = os.path.join(local_dir, s3_filename)
+
+                              needs_download = True
+
+                              if os.path.exists(specific_local_path):
+                                    local_timestamp = os.path.getmtime(specific_local_path)
+                                    local_last_modified = datetime.fromtimestamp(local_timestamp, tz=pytz.utc)
+
+                                    if local_last_modified >= s3_last_modified:
+                                          print(f"Local file already updated: {s3_filename}")
+                                          needs_download = False
+
+                              if needs_download:
+                                    print(f"Updating model file from s3: {s3_key} -> {specific_local_path}")
+                                    self.s3_client.download_file(self.bucket_name, s3_key, specific_local_path)
+
+                        return True
+
+                  # ==========================================
+                  # LÓGICA 2: MODELOS COMUNS (Apenas o mais recente)
+                  # ==========================================
+                  else:
+                        valid_files = [
+                              obj for obj in raw_contents 
+                              if not obj['Key'].endswith('/') and obj['Size'] > 0
+                        ]
+
+                        if not valid_files:
+                              print("Not valid archives in s3")
+                              return False
+
+                        # Pega o arquivo mais recente
+                        latest_obj = sorted(valid_files, key=lambda x: x['LastModified'], reverse=True)[0]
+                        s3_key = latest_obj['Key']
+                        s3_last_modified = latest_obj['LastModified']
+                        print("Modelo last modified no s3: ", s3_last_modified)
+
+                        if os.path.exists(local_path):
+                              local_timestamp = os.path.getmtime(local_path)
+                              local_last_modified = datetime.fromtimestamp(local_timestamp, tz=pytz.utc)
+
+                              if local_last_modified >= s3_last_modified:
+                                    print("Local file already updated")
+                                    return True
+                        
+                        # Cria a pasta e baixa o arquivo único
+                        os.makedirs(os.path.dirname(local_path), exist_ok=True)
+                        self.s3_client.download_file(self.bucket_name, s3_key, local_path)
+                        print(f"Updating model from s3: {s3_key} -> {local_path}")
+                        
+                        return True
 
             except Exception as e:
                   print("Error on sincronizing models from s3", e)
+                  return False
 
 
       def deploy_model(self, local_model_path: str, is_base_mebedding: bool = False, traffic_source: str = None, emb_config: str = None) -> bool:

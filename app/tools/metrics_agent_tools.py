@@ -1,3 +1,5 @@
+from typing import List
+
 from langchain.tools import tool
 import pandas as pd
 import json
@@ -20,6 +22,9 @@ from app.tools.context_store import AnalysisContext
 from app.services.mil_ia_service import ModelService
 from app.config.settings import settings
 
+from app.config.container import campaign_service, request_service
+from app.utils.analise import analyze_frequencies
+
 
 MODELS_PATH = f"G:/Meu Drive/TWR/data"
 LABEL_MAP = {"bots": 0, "unsafe": 1, "bot": 0}
@@ -32,10 +37,8 @@ BASE_MODEL_PATH = "files/models"
 @tool
 def run_ml_inference_pipeline() -> str:
     """
-    EXECUTE FIRST. Runs ML inference on data currently in Global Context.
-    PREREQUISITE: Orchestrator must have loaded data.
-    ARGS: None.
-    RETURNS: Summary string. Updates internal state for queries.
+    EXECUTE FIRST. Runs MIL inference on data currently in Global Context.
+    Evaluation is performed at BAG LEVEL (correct for MIL).
     """
     try:
         df = AnalysisContext.get_data_from_mongo()
@@ -45,9 +48,9 @@ def run_ml_inference_pipeline() -> str:
 
     if df.empty:
         return "Error: Dataset is empty."
-    
-    print(f"Iniciando Inferência MIL para a fonte: {traffic_source}")
-    print(f"Embedding type: {EMBEDDING_CONFIG}")
+
+    print(f"Starting MIL inference for traffic source: {traffic_source}")
+    print(f"Embedding config: {EMBEDDING_CONFIG}")
 
     try:
         inference_service = ModelService(
@@ -55,56 +58,141 @@ def run_ml_inference_pipeline() -> str:
             emb_config=EMBEDDING_CONFIG,
         )
     except Exception as e:
-        return f"Erro ao chamar o ModelService: {e}"
+        return f"Error initializing ModelService: {e}"
 
     try:
-        # Se o seu método no serviço ainda tiver 'async def', adicione o 'await' antes de inference_service
         df_results = inference_service.predict(df)
-        print("Amostra dos resultados:")
-        print(df_results[['ip', 'bag_id', 'pred', 'certeza_bag']].head())
+        print("Inference sample:")
+        print(df_results[["ip", "bag_id", "pred", "certeza_bag"]].head())
     except Exception as e:
         return f"Error during ML inference execution: {e}"
     
-    # === AQUI ESTÁ A MUDANÇA CRUCIAL ===
-    if "decision" in df_results.columns:
-        # 1. Padroniza o texto do banco e converte para números (1 = bots, 0 = unsafe)
-        df_results["target"] = df_results["decision"].str.lower().replace({"bot": "bots"}).map({"bots": 1, "unsafe": 0})
-        
-        df_results["is_error"] = (df_results["target"] != df_results["pred"])
-        accuracy = (df_results["target"] == df_results["pred"]).mean()
-        total_errors = df_results["is_error"].sum()
-        
-        # 3. FP e FN também usam a lógica matemática (1 e 0)
-        # Falso Positivo: Era humano (0), mas o modelo disse Bot (1)
-        df_fp = df_results[(df_results["target"] == 0) & (df_results["pred"] == 1)]
-        # Falso Negativo: Era bot (1), mas o modelo disse Humano (0)
-        df_fn = df_results[(df_results["target"] == 1) & (df_results["pred"] == 0)]
-        
-        qtd_fp = len(df_fp)
-        qtd_fn = len(df_fn)
-    else:
-        df_results["is_error"] = False
-        accuracy = 0.0
-        total_errors = 0
-        qtd_fp = 0
-        qtd_fn = 0
+    # ---------------------------------------------------------
+    # ETAPA E: AVALIAÇÃO DE DESEMPENHO (MÉTRICAS)
+    # ---------------------------------------------------------
+    acuracia = (df_results["decision_mil"] == df_results["pred"]).mean()
+    total_erros = (df_results["decision_mil"] != df_results["pred"]).sum()
+    
+    fp = len(df_results[(df_results["decision_mil"] == 0) & (df_results["pred"] == 1)])
+    fn = len(df_results[(df_results["decision_mil"] == 1) & (df_results["pred"] == 0)])
 
-    # Salva o dataframe processado no contexto
+    # # -------------------------------------------------
+    # # ✅ CORRECT MIL EVALUATION (BAG LEVEL)
+    # # -------------------------------------------------
+    # if "decision" in df_results.columns:
+    #     # Normalize decision labels
+    #     df_results["decision_norm"] = (
+    #         df_results["decision"]
+    #         .str.lower()
+    #         .replace({"bot": "bots"})
+    #         .map({"bots": 1, "unsafe": 0})
+    #     )
+
+    #     # Build BAG-LEVEL evaluation table
+    #     bag_eval_df = (
+    #         df_results
+    #         .groupby("bag_id")
+    #         .agg(
+    #             target=("decision_norm", "max"),  # MIL ground truth
+    #             pred=("pred", "first"),
+    #             bag_probability=("bag_probability", "first")
+    #         )
+    #         .reset_index()
+    #     )
+
+    #     bag_eval_df["is_error"] = bag_eval_df["target"] != bag_eval_df["pred"]
+
+    #     accuracy = (bag_eval_df["target"] == bag_eval_df["pred"]).mean()
+    #     total_errors = bag_eval_df["is_error"].sum()
+
+    #     # False Positives / False Negatives (BAG LEVEL)
+    #     qtd_fp = len(
+    #         bag_eval_df[(bag_eval_df["target"] == 0) & (bag_eval_df["pred"] == 1)]
+    #     )
+    #     qtd_fn = len(
+    #         bag_eval_df[(bag_eval_df["target"] == 1) & (bag_eval_df["pred"] == 0)]
+    #     )
+    # else:
+    #     accuracy = 0.0
+    #     total_errors = 0
+    #     qtd_fp = 0
+    #     qtd_fn = 0
+    #     bag_eval_df = None
+
+    # Save detailed (line-level) results for downstream tools
     AnalysisContext.set_ml_results_data(df_results)
 
-    print(f"Checando se a tool de inferência salva os dados: {len(AnalysisContext.get_data_to_analise())}")
+    print(
+        "Inference completed | "
+        f"Lines: {len(df_results)} | "
+        # f"Bags: {bag_eval_df.shape[0] if bag_eval_df is not None else 0}"
+    )
 
     return (
         f"Inference completed using MIL '{traffic_source}' model.\n"
-        f"- Analyzed: {len(df_results)} samples.\n"
-        f"- Model Accuracy: {accuracy * 100:.2f}%\n"
-        f"- Total prediction discrepancies: {total_errors}\n"
-        f"- Total False Positives (real = unsafe | pred = bots): {qtd_fp}\n"
-        f"- Total False Negatives (real = bots | pred = unsafe): {qtd_fn}\n\n"
-        "You can now:\n"
-        "1. Call 'get_dataset_health_check' to see overall performance stats.\n"
-        "2. Call 'query_anomalous_ids' to extract specific samples for the Detective Agent."
+        f"- Total samples (lines): {len(df_results)}\n"
+        # f"- Total bags evaluated: {bag_eval_df.shape[0] if bag_eval_df is not None else 0}\n"
+        f"- Model Accuracy (bag-level): {acuracia * 100:.2f}%\n"
+        f"- Total bag prediction errors: {total_erros}\n"
+        f"- False Positives (real = unsafe | pred = bots): {fp}\n"
+        f"- False Negatives (real = bots | pred = unsafe): {fn}\n\n"
+        "Next steps:\n"
+        "1. Call 'get_dataset_health_check' for bag-level stats.\n"
+        "2. Call 'query_anomalous_ids' to inspect specific bags.\n"
+        "3. Use attention weights to explain MIL decisions."
     )
+
+@tool
+async def get_context_data(
+    excluded_hashes: List[str],
+    traffic_source: str
+) -> dict:
+    """
+    Fetches contextual traffic data, runs frequency analysis,
+    and returns explainable signals for the agent.
+    """
+
+    hashes = await campaign_service.fetch_recent_active_campaign_hashes_excluding(
+        excluded_hashes=excluded_hashes,
+        traffic_source=traffic_source
+    )
+
+    requests = await request_service.fetch_training_sample_by_hashes(
+        hashes=hashes,
+        limit_each=1000
+    )
+
+    df_database = pd.DataFrame(requests)
+    df_analysis = AnalysisContext.get_data_to_analise()
+
+    if df_database.empty or df_analysis.empty:
+        return {
+            "status": "empty",
+            "message": "Not enough data to run analysis"
+        }
+
+    frequencies = analyze_frequencies(
+        df_analysis=df_analysis,
+        df_database=df_database
+    )
+
+    strong_bot_signals = (
+        frequencies[
+            (frequencies["class"] == "bot") &
+            (frequencies["value"] != "absent") &
+            (frequencies["percentage"] > 70)
+        ]
+        .sort_values("percentage", ascending=False)
+        .head(20)
+    )
+
+    return {
+        "status": "ok",
+        "ml_rows": len(df_analysis),
+        "database_rows": len(df_database),
+        "strong_bot_signals": strong_bot_signals.to_dict(orient="records")
+    }
+
 
 
 @tool

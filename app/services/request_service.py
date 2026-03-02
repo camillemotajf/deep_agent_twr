@@ -1,3 +1,5 @@
+from typing import Dict, List
+
 from app.repositories.mongo_repository import MongoRepository
 
 class RequestService:
@@ -28,7 +30,7 @@ class RequestService:
         self,
         hashes: list[str],
         limit_each: int = 10000
-    ) -> list[str]:
+    ) -> List[Dict]:
         
         if not hashes:
             raise ValueError("")

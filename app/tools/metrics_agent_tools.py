@@ -62,6 +62,10 @@ def run_ml_inference_pipeline() -> str:
 
     try:
         df_results = inference_service.predict(df)
+        df_results_intance = inference_service.predict_with_instance_metrics(df)
+
+        print("Results Instance: ")
+        print(df_results_intance)
         print("Inference sample:")
         print(df_results[["ip", "bag_id", "pred", "certeza_bag"]].head())
     except Exception as e:
@@ -75,51 +79,6 @@ def run_ml_inference_pipeline() -> str:
     
     fp = len(df_results[(df_results["decision_mil"] == 0) & (df_results["pred"] == 1)])
     fn = len(df_results[(df_results["decision_mil"] == 1) & (df_results["pred"] == 0)])
-
-    # # -------------------------------------------------
-    # # ✅ CORRECT MIL EVALUATION (BAG LEVEL)
-    # # -------------------------------------------------
-    # if "decision" in df_results.columns:
-    #     # Normalize decision labels
-    #     df_results["decision_norm"] = (
-    #         df_results["decision"]
-    #         .str.lower()
-    #         .replace({"bot": "bots"})
-    #         .map({"bots": 1, "unsafe": 0})
-    #     )
-
-    #     # Build BAG-LEVEL evaluation table
-    #     bag_eval_df = (
-    #         df_results
-    #         .groupby("bag_id")
-    #         .agg(
-    #             target=("decision_norm", "max"),  # MIL ground truth
-    #             pred=("pred", "first"),
-    #             bag_probability=("bag_probability", "first")
-    #         )
-    #         .reset_index()
-    #     )
-
-    #     bag_eval_df["is_error"] = bag_eval_df["target"] != bag_eval_df["pred"]
-
-    #     accuracy = (bag_eval_df["target"] == bag_eval_df["pred"]).mean()
-    #     total_errors = bag_eval_df["is_error"].sum()
-
-    #     # False Positives / False Negatives (BAG LEVEL)
-    #     qtd_fp = len(
-    #         bag_eval_df[(bag_eval_df["target"] == 0) & (bag_eval_df["pred"] == 1)]
-    #     )
-    #     qtd_fn = len(
-    #         bag_eval_df[(bag_eval_df["target"] == 1) & (bag_eval_df["pred"] == 0)]
-    #     )
-    # else:
-    #     accuracy = 0.0
-    #     total_errors = 0
-    #     qtd_fp = 0
-    #     qtd_fn = 0
-    #     bag_eval_df = None
-
-    # Save detailed (line-level) results for downstream tools
     AnalysisContext.set_ml_results_data(df_results)
 
     print(
@@ -131,7 +90,6 @@ def run_ml_inference_pipeline() -> str:
     return (
         f"Inference completed using MIL '{traffic_source}' model.\n"
         f"- Total samples (lines): {len(df_results)}\n"
-        # f"- Total bags evaluated: {bag_eval_df.shape[0] if bag_eval_df is not None else 0}\n"
         f"- Model Accuracy (bag-level): {acuracia * 100:.2f}%\n"
         f"- Total bag prediction errors: {total_erros}\n"
         f"- False Positives (real = unsafe | pred = bots): {fp}\n"

@@ -16,39 +16,93 @@ LABEL_MAP = {"bots": 0, "unsafe": 1}
 # 1. MODELO E DATASET MIL
 # ==========================================
 
+# class AttentionMIL(nn.Module):
+#     def __init__(self, in_features, hidden_dim=128):
+#         super(AttentionMIL, self).__init__()
+
+
+#         self.feature_extractor = nn.Sequential(
+#             nn.Linear(in_features, hidden_dim),
+#             nn.ReLU(),
+#             nn.Dropout(0.2),
+#             nn.Linear(hidden_dim, hidden_dim),
+#             nn.ReLU(),
+#             nn.Dropout(0.2)
+#         )
+#         self.attention = nn.Sequential(
+#             nn.Linear(hidden_dim, hidden_dim // 2),
+#             nn.Tanh(),
+#             nn.Linear(hidden_dim // 2, 1)
+#         )
+#         self.classifier = nn.Sequential(
+#             nn.Linear(hidden_dim, 1),
+#             # nn.Sigmoid() 
+#         )
+
+#     def forward(self, x):
+#         B, N, F_dim = x.size()
+#         x_flat = x.view(-1, F_dim)
+        
+#         h = self.feature_extractor(x_flat)
+#         a = self.attention(h)
+        
+#         a = a.view(B, N, 1)
+#         h = h.view(B, N, -1)
+        
+#         A = F.softmax(a, dim=1) 
+#         z = torch.bmm(A.transpose(1, 2), h).squeeze(1)
+        
+#         Y_logit = self.classifier(z)
+#         return Y_logit, A
+    
 class AttentionMIL(nn.Module):
-    def __init__(self, in_features, hidden_dim=128):
+    def __init__(self, input_dim, hidden_dim=512, attention_dim=128):
         super(AttentionMIL, self).__init__()
+        self.L = hidden_dim
+        self.D = attention_dim
+        self.K = 1
+
+        # Extrator de características para os dados HTTP (Embeddings/Dense)
         self.feature_extractor = nn.Sequential(
-            nn.Linear(in_features, hidden_dim),
+            nn.Linear(input_dim, self.L),
             nn.ReLU(),
-            nn.Dropout(0.2)
         )
-        self.attention = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim // 2),
-            nn.Tanh(),
-            nn.Linear(hidden_dim // 2, 1)
+
+        # Mecanismo de Atenção (Gated Attention)
+        self.attention_V = nn.Sequential(
+            nn.Linear(self.L, self.D),
+            nn.Tanh()
         )
+        self.attention_U = nn.Sequential(
+            nn.Linear(self.L, self.D),
+            nn.Sigmoid()
+        )
+        self.attention_weights = nn.Linear(self.D, self.K)
+
+        # Classificador final
         self.classifier = nn.Sequential(
-            nn.Linear(hidden_dim, 1),
-            nn.Sigmoid() 
+            nn.Linear(self.L * self.K, 1),
+            # nn.Sigmoid()
         )
 
     def forward(self, x):
-        B, N, F_dim = x.size()
-        x_flat = x.view(-1, F_dim)
-        
-        h = self.feature_extractor(x_flat)
-        a = self.attention(h)
-        
-        a = a.view(B, N, 1)
-        h = h.view(B, N, -1)
-        
-        A = F.softmax(a, dim=1) 
-        z = torch.bmm(A.transpose(1, 2), h).squeeze(1)
-        
-        Y_prob = self.classifier(z)
-        return Y_prob, A
+        if x.dim() == 3:
+            x = x.squeeze(0)
+        # x shape: (num_instancias, input_dim) -> uma "bag" de requisições HTTP
+        H = self.feature_extractor(x)  # (N, L)
+
+        # Cálculo dos pesos de atenção
+        A_V = self.attention_V(H)  # (N, D)
+        A_U = self.attention_U(H)  # (N, D)
+        A = self.attention_weights(A_V * A_U) # (N, K)
+        A = torch.transpose(A, 1, 0)  # (K, N)
+        A = F.softmax(A, dim=1)  # Softmax sobre as instâncias
+
+        M = torch.matmul(A, H)  # (K, L)
+
+        # Predição final (Bot vs Humano)
+        prob = self.classifier(M)
+        return prob, A
   
     
 class MILBagDatasetLogical(Dataset):
@@ -73,7 +127,14 @@ class MILBagDatasetLogical(Dataset):
         return len(self.bags)
 
     def __getitem__(self, idx):
-        return self.bags[idx], self.bag_labels[idx], self.ips[idx]
+        bag = self.bags[idx]        # Shape esperado: (N, features)
+        label = self.bag_labels[idx] # Shape esperado: (1,)
+        ip = self.ips[idx]
+        
+        if bag.dim() == 3:
+            bag = bag.squeeze(0)
+            
+        return bag, label, ip
 
 
 # class MILTrainingService:

@@ -18,6 +18,8 @@ from app.config.settings import settings
 from app.repositories.model_repository import ModelRepository
 from app.services.embedding_service import EmbeddingService
 
+from torch.nn.utils.rnn import pad_sequence
+
 class MILAttentionLayer(nn.Module):
       def __init__(self, input_dim, weight_params_dim, use_gated=True):
             super(MILAttentionLayer, self).__init__()
@@ -38,7 +40,7 @@ class MILAttentionLayer(nn.Module):
             else:
                   self.register_parameter("u_weight_params", None)
 
-      def forward(self, inputs):
+      def forward(self, inputs, mask=None):
 
             if isinstance(inputs, list):
                   h = torch.stack(inputs)
@@ -49,10 +51,14 @@ class MILAttentionLayer(nn.Module):
 
             if self.use_gated:
                   a_u = torch.sigmoid(self.u_weight_params(h))
-
                   a_v = a_v * a_u
 
             attention_scores = self.w_weight_params(a_v)
+
+            # zerar a attention onde houver padding
+            if mask is not None:
+                  attention_scores = attention_scores.masked_fill(~mask, 1e-9)
+
             alpha = F.softmax(attention_scores, dim=0)
 
             return [alpha[i] for i in range(alpha.shape[0])]
@@ -72,7 +78,7 @@ class MILBotClassifier(nn.Module):
                   nn.Linear(64, 1) # Retorna "logits" (sem sigmoid, melhor para estabilidade no treino)
             )
 
-      def forward(self, x, return_attention=False):
+      def forward(self, x, mask=None, return_attention=False):
             """
             Args:
             x: Tensor de formato (batch_size, bag_size, input_dim)
@@ -83,7 +89,7 @@ class MILBotClassifier(nn.Module):
             x_list = list(torch.unbind(x_swapped, dim=0))
             
             # Obter os scores de atenção: Lista de tamanho bag_size de tensores (batch_size, 1)
-            attention_scores = self.attention(x_list)
+            attention_scores = self.attention(x_list, mask)
             
             # Empilhar os scores para multiplicar: (bag_size, batch_size, 1)
             att_stacked = torch.stack(attention_scores)
@@ -115,6 +121,49 @@ class MILBagProcessor:
       def __init__(self, positive_class="bots"):
             # Não precisamos mais do bag_size!
             self.positive_class = positive_class
+
+
+      def mil_collate_fn(self, batch):
+            """
+            Recebe uma lista de tuplas (bag_tensor, label) e junta em um Batch dinâmico.
+            """
+            bags = [item[0] for item in batch]
+            labels = [item[1] for item in batch]
+
+            # Salva os tamanhos originais de cada bag
+            lengths = torch.tensor([len(bag) for bag in bags])
+
+            # Faz o Padding Dinâmico (preenche com zeros até o tamanho da maior bag DO BATCH)
+            padded_bags = pad_sequence(bags, batch_first=True, padding_value=0.0)
+
+            # Cria a Máscara Booleana (True para dados reais, False para os zeros do padding)
+            batch_size, max_len, _ = padded_bags.shape
+            mask = torch.arange(max_len).expand(batch_size, max_len) < lengths.unsqueeze(1)
+            mask = mask.unsqueeze(-1) # Formato: [batch_size, seq_len, 1]
+
+            labels = torch.stack(labels)
+            
+            return padded_bags, labels, mask
+      
+      def bucketing(self, bags_list, labels_list, batch_size=32):
+            data_with_lengths = [(bag, label, len(bag)) for bag, label in zip(bags_list, labels_list)]
+            data_with_lengths.sort(key=lambda x: x[2])
+
+            sorted_bags = [x[0] for x in data_with_lengths]
+            sorted_labels = [x[1] for x in data_with_lengths]
+
+            dataset = MILDataset(sorted_bags, sorted_labels)
+
+            train_loader = DataLoader(
+                  dataset=dataset,
+                  batch_size=batch_size,
+                  shuffle=False,
+                  collate_fn=self.mil_collate_fn,
+                  pin_memory=True
+            )
+
+            return train_loader
+
 
       def transform(self, df: pd.DataFrame):
             # Agrupa as instâncias pelo bag_id
@@ -266,8 +315,12 @@ class MILAttetionService:
             
             processor = MILBagProcessor(positive_class="bots")
             bags_tensor, labels_tensor = processor.transform(df)
-            dataset = MILDataset(bags_tensor, labels_tensor)
-            train_loader = DataLoader(dataset, batch_size=1, shuffle=True)
+            train_loader = processor.bucketing(
+                  bags_list=bags_tensor,
+                  labels_list=labels_tensor
+            )
+            # dataset = MILDataset(bags_tensor, labels_tensor)
+            # train_loader = DataLoader(dataset, batch_size=1, shuffle=True)
 
             model = MILBotClassifier(input_dim=self.in_features, weight_params_dim=128).to(self.device)
 
@@ -283,10 +336,14 @@ class MILAttetionService:
                   correct_preds = 0.0
                   total_samples = 0 
 
-                  progress_bar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{epochs}")
+                  batches = list(train_loader)
+                  np.random.shuffle(batches)
+
+                  progress_bar = tqdm(batches, desc=f"Epoch {epoch+1}/{epochs}")
 
                   batch = 32
                   optimizer.zero_grad()
+
 
                   for i, (batch_x, batch_y) in enumerate(progress_bar):
                         batch_x, batch_y = batch_x.to(self.device), batch_y.to(self.device)

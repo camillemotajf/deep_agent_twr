@@ -4,9 +4,11 @@ import os
 
 import torch
 from torch import optim
+# from torch.cuda.amp import GradScaler
+from torch.amp import autocast, GradScaler
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils.data import DataLoader, TensorDataset
+from torch.utils.data import DataLoader, Dataset, TensorDataset
 
 import pandas as pd
 import numpy as np
@@ -22,7 +24,7 @@ class MILAttentionLayer(nn.Module):
 
             self.input_dim = input_dim
             self.weight_params_dim = weight_params_dim
-            self.used_gated = use_gated
+            self.use_gated = use_gated
 
             # v: projeção inicial
             self.v_weight_params = nn.Linear(input_dim, weight_params_dim, bias=False)
@@ -45,7 +47,7 @@ class MILAttentionLayer(nn.Module):
 
             a_v = torch.tanh(self.v_weight_params(h))
 
-            if self.used_gated:
+            if self.use_gated:
                   a_u = torch.sigmoid(self.u_weight_params(h))
 
                   a_v = a_v * a_u
@@ -60,7 +62,7 @@ class MILBotClassifier(nn.Module):
             super().__init__()
             
             # 1. A sua Camada de Atenção
-            self.attention = MILAttentionLayer(input_dim, weight_params_dim)
+            self.attention = MILAttentionLayer(input_dim, weight_params_dim, use_gated=use_gated)
             
             # 2. O Classificador Final (Pode ajustar as camadas ocultas)
             self.classifier = nn.Sequential(
@@ -70,7 +72,7 @@ class MILBotClassifier(nn.Module):
                   nn.Linear(64, 1) # Retorna "logits" (sem sigmoid, melhor para estabilidade no treino)
             )
 
-      def forward(self, x):
+      def forward(self, x, return_attention=False):
             """
             Args:
             x: Tensor de formato (batch_size, bag_size, input_dim)
@@ -96,73 +98,75 @@ class MILBotClassifier(nn.Module):
             
             # Passar pelo classificador final
             logits = self.classifier(bag_representation)
+
+            if return_attention:
+                  # Transpomos para (batch_size, bag_size) para ficar fácil de ler
+                  weights = att_stacked.permute(1, 0, 2).squeeze(-1)
+                  return logits, weights
             
             return logits
 
 
 class MILBagProcessor:
-    """
-    Processa um DataFrame para gerar Bags para Multiple Instance Learning (MIL).
-    
-    Args:
-        bag_size (int): Tamanho fixo de cada bag (número de instâncias).
-        positive_class (int): Rótulo que define a classe positiva (ex: 1 para 'bots').
-    """
-    def __init__(self, bag_size: int, positive_class: int = 1):
-        self.bag_size = bag_size
-        self.positive_class = positive_class
+      """
+      Processa um DataFrame para gerar Bags para Multiple Instance Learning (MIL).
+      Gera bags de tamanhos variáveis (tamanho real do histórico) para uso com batch_size=1.
+      """
+      def __init__(self, positive_class="bots"):
+            # Não precisamos mais do bag_size!
+            self.positive_class = positive_class
 
-    def transform(self, df: pd.DataFrame):
+      def transform(self, df: pd.DataFrame):
+            # Agrupa as instâncias pelo bag_id
+            bags_df = df.groupby("bag_id").agg({
+                  "embedding": list,
+                  "decision": list,
+                  "ip": list
+            }).reset_index()
 
-        bags_df = df.groupby("bag_id").agg({
-            "embedding": list,
-            "decision_mil": list,
-            "decision": list,
-            "ip": list
-        }).reset_index()
+            bags_list = []
+            labels_list = []
+            positive_bags_count = 0
 
-        bags_data = []
-        bag_labels = []
-        positive_bags_count = 0
+            for _, row in bags_df.iterrows():
+                  instance_embeddings = row["embedding"]
+                  instance_labels = row["decision"]
+                  
+                  # 1. Cria o Tensor da Bag com o seu tamanho original [N_instancias, features]
+                  bag_tensor = torch.tensor(np.array(instance_embeddings), dtype=torch.float32)
+                  
+                  # 2. Define o rótulo da Bag (se há pelo menos 1 bot, a bag é bot)
+                  if self.positive_class in instance_labels:
+                        bag_label = 1.0
+                        positive_bags_count += 1
+                  else:
+                        bag_label = 0.0
+                        
+                  bags_list.append(bag_tensor)
+                  labels_list.append(torch.tensor([bag_label], dtype=torch.float32))
 
-        for _, row in bags_df.iterrows():
-            instance_embeddings = row["embedding"]
-            instance_labels = row["decision"]
-            num_instances = len(instance_embeddings)
-            
-            # Ajustar o tamanho da bag para o 'self.bag_size' fixo
-            if num_instances >= self.bag_size:
-                # Subamostragem sem reposição (pega num subconjunto aleatório)
-                indices = np.random.choice(num_instances, self.bag_size, replace=False)
-            else:
-                # Sobreamostragem com reposição (repete instâncias para preencher a bag)
-                indices = np.random.choice(num_instances, self.bag_size, replace=True)
-            
-            sampled_embeddings = [instance_embeddings[i] for i in indices]
-            sampled_labels = [instance_labels[i] for i in indices]
-            
-            # 3. Definir o rótulo da Bag (A regra de ouro do MIL)
-            # Se houver PELO MENOS UMA instância positiva na bag, a bag é positiva.
-            if self.positive_class in sampled_labels:
-                bag_label = 1
-                positive_bags_count += 1
-            else:
-                bag_label = 0
-                
-            bags_data.append(sampled_embeddings)
-            bag_labels.append([bag_label])
+            print(f"Total de Bags Processadas: {len(bags_list)}")
+            print(f"  -> Bags Positivas (com bots): {positive_bags_count}")
+            print(f"  -> Bags Negativas (seguras): {len(bags_list) - positive_bags_count}")
 
-        print(f"Total de Bags geradas: {len(bags_df)}")
-        print(f"  -> Bags Positivas (com bots): {positive_bags_count}")
-        print(f"  -> Bags Negativas (seguras): {len(bags_df) - positive_bags_count}")
-        bags_tensor = torch.tensor(np.array(bags_data), dtype=torch.float32)
-        labels_tensor = torch.tensor(bag_labels, dtype=torch.float32)
-        
-        bags_swapped = torch.swapaxes(bags_tensor, 0, 1)
-      
-        bags_list_of_tensors = list(torch.unbind(bags_swapped, dim=0))
+            # Retorna as listas de tensores
+            return bags_list, labels_list
 
-        return bags_tensor, labels_tensor
+
+# ==========================================================
+# DATASET CUSTOMIZADO PARA TAMANHOS VARIÁVEIS
+# ==========================================================
+class MILDataset(Dataset):
+      def __init__(self, bags_list, labels_list):
+            self.bags = bags_list
+            self.labels = labels_list
+
+      def __len__(self):
+            return len(self.labels)
+
+      def __getitem__(self, idx):
+            # Retorna a bag e o label daquela posição
+            return self.bags[idx], self.labels[idx]
     
 
 class MILAttetionService:
@@ -259,29 +263,19 @@ class MILAttetionService:
             df["embedding"] = list(embeddings_matrix)
 
             logger.info("Agrupando requisições em Bags por Endereço IP...")
-            bags_df = df.groupby("bag_id").agg({
-                  "embedding": list,
-                  "decision_mil": list,
-                  "ip": list
-            }).reset_index()
-
-            # aplicando soft bag_label
-            bags_df["bag_label"] = bags_df["decision_mil"].apply(
-                  lambda labels: self._soft_bag_label(labels, min_pos=2, alpha=1.5)
-            )
-
-            processor = MILBagProcessor(bag_size=3, positive_class="bots")
+            
+            processor = MILBagProcessor(positive_class="bots")
             bags_tensor, labels_tensor = processor.transform(df)
-            dataset = TensorDataset(bags_tensor, labels_tensor)
-            BATCH_SIZE = 32
-            train_loader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True)
+            dataset = MILDataset(bags_tensor, labels_tensor)
+            train_loader = DataLoader(dataset, batch_size=1, shuffle=True)
 
-            model = MILBotClassifier(input_dim=self.in_features, weight_params_dim=128)
+            model = MILBotClassifier(input_dim=self.in_features, weight_params_dim=128).to(self.device)
 
             optimizer = optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-4)
             criterion = nn.BCEWithLogitsLoss()
 
             logger.info(f"Iniciando treinamento ({epochs} épocas) no {self.device}...")
+            scaler = GradScaler(device=self.device)
 
             for epoch in range(epochs):
                   model.train()
@@ -291,19 +285,31 @@ class MILAttetionService:
 
                   progress_bar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{epochs}")
 
-                  for batch_x, batch_y in progress_bar:
+                  batch = 32
+                  optimizer.zero_grad()
+
+                  for i, (batch_x, batch_y) in enumerate(progress_bar):
                         batch_x, batch_y = batch_x.to(self.device), batch_y.to(self.device)
-                        optimizer.zero_grad()
-                        logits = model(batch_x)
+                        # optimizer.zero_grad()
+                        with autocast(device_type="cuda"):
+                              logits = model(batch_x)
+                              loss = criterion(logits, batch_y)
+                              loss = loss / batch
 
-                        loss = criterion(logits, batch_y)
-                        loss.backward()
-                        optimizer.step()
+                        scaler.scale(loss).backward()
 
-                        epoch_loss += loss.item()
-                        preds = torch.sigmoid(logits).round()
-                        correct_preds += (preds == batch_y).sum().item()
-                        total_samples += batch_y.size(0)
+                        if (i + 1) % batch == 0 or (i + 1) == len(train_loader):
+                              scaler.step(optimizer)
+                              scaler.update()
+                              optimizer.zero_grad()
+
+                        epoch_loss += loss.item() * batch
+                        batch_y = batch_y.float()
+
+                        with torch.no_grad():
+                              preds = torch.sigmoid(logits).squeeze().round()
+                              correct_preds += (preds == batch_y.squeeze()).sum().item()
+                              total_samples += batch_y.size(0)
 
                         progress_bar.set_postfix({'loss': loss.item(), 'acc': correct_preds/total_samples})
 
@@ -317,3 +323,79 @@ class MILAttetionService:
                   "model_state_dict": model.state_dict(),
                   "config": {"in_features": self.in_features, "hidden_dim": self.hidden_dim},
             }, self.model_path)
+
+
+
+      def predict(self, df: pd.DataFrame) -> pd.DataFrame:
+            
+            # 1. Prepara os dados iniciais
+            embedding_matrix, _ = EmbeddingService.process_and_encode(df)
+            df["embedding"] = list(embedding_matrix)
+
+            df["decision"] = df["decision"].str.lower().replace({"bot": "bots"})
+            df["decision_mil"] = df["decision"].map({"bots": 1, "unsafe": 0})
+
+            df["ip_block"] = df["ip"].apply(self._extract_ip_stack)
+            df["ip_api_isp"] = df["ip_api_isp"].fillna("ip_unknow")
+            df["bag_id"] = df["ip_block"] + " | " + df["ip_api_isp"]
+
+            # Agrupa as instâncias (aqui as bags ficam com tamanhos originais: 1, 5, 10, etc)
+            bags_df = df.groupby("bag_id").agg({
+                  "embedding": list,
+                  "decision_mil": list,
+                  "ip": list
+            }).reset_index()
+
+            # 2. Carrega o Modelo
+            model = MILBotClassifier(input_dim=self.in_features, weight_params_dim=128, use_gated=True)
+            cp = torch.load(self.model_path, weights_only=False)
+            model.load_state_dict(cp["model_state_dict"])
+            model.eval().to(self.device)
+
+            all_probs = []
+            all_attentions = []
+
+            # 3. Inferência (Sem MILBagProcessor e Sem Lote)
+            # Passamos o histórico inteiro de cada IP de uma vez só
+            with torch.no_grad():
+                  for _, row in bags_df.iterrows():
+                        # Converte as requisições do IP atual num Tensor
+                        bag_x = torch.tensor(np.array(row["embedding"]), dtype=torch.float32)
+                        
+                        # Adiciona a dimensão de batch artificial [1, N_requisicoes, features]
+                        batch_x = bag_x.unsqueeze(0).to(self.device)
+                        
+                        # Modelo avalia o histórico completo sem cortes
+                        logits, attention_w = model(batch_x, return_attention=True)
+                        
+                        probs = torch.sigmoid(logits).squeeze(-1)
+                        if probs.dim() == 0:
+                              probs = probs.unsqueeze(0)
+                        
+                        all_probs.extend(probs.cpu().numpy())
+                        
+                        # Achata a atenção [1, N] para uma lista de tamanho N
+                        all_attentions.append(list(attention_w.cpu().numpy().flatten()))
+
+            # 4. Acoplando os resultados de volta
+            # Como processamos 1 por 1, os tamanhos são RIGOROSAMENTE iguais
+            bags_df["mil_bot_probability"] = np.array(all_probs)
+            bags_df["mil_prediction"] = (np.array(all_probs) >= 0.5).astype(int)
+            bags_df["attention_weight"] = all_attentions
+
+            # 5. Explodindo de volta para nível de Instância (sem precisar truncar)
+            instances_df = bags_df.explode([
+                 "ip", 
+                 "embedding", 
+                 "attention_weight",
+                 "decision_mil"
+            ]).reset_index(drop=True)
+            
+            # Ordenamos para ver rapidamente quem foi o maior culpado
+            # instances_df = instances_df.sort_values(by=["bag_id", "attention_weight"], ascending=[True, False])
+            instances_df["decision_mil"] = instances_df["decision_mil"].astype(int)
+            instances_df["attention_weight"] = instances_df["attention_weight"].astype(float)
+
+            return instances_df
+
+

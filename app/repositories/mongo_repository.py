@@ -42,6 +42,7 @@ class MongoRepository:
       async def get_training_sample_by_hashes(self, hashes: list[str], limit_each: int = 10000) -> List[Dict]:
 
             projection = {
+                 "_id": False,
                   "headers": True,
                   "request": True,
                   "decision": True,
@@ -62,12 +63,12 @@ class MongoRepository:
             }
 
             results = await asyncio.gather(
-                  self.collection.find(query_bots, projection)
+                  self.collection.find(query_bots, projection=projection)
                   .limit(limit_each)
                   .sort("datetime", -1)
                   .to_list(),
 
-                  self.collection.find(query_unsafe, projection)
+                  self.collection.find(query_unsafe, projection=projection)
                   .limit(limit_each)
                   .sort("datetime", -1)
                   .to_list(),

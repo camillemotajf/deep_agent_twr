@@ -2,195 +2,139 @@ import pandas as pd
 import json
 import ast
 from typing import List
-
+from langchain_core.tools import tool # Assumindo que você usa LangChain
 
 # =====================================================
-# Safe parsing for dict-like columns
+# 1. PARSER DE DICIONÁRIOS (Blindado contra o Mongo)
 # =====================================================
 def parse_dict_col(val):
     """
-    Safely parse a value that may represent a dictionary.
-    Accepts dict, JSON string, Python literal string, or NaN.
+    Converte strings JSON, listas do Mongo ou dicionários nativos em dict plano.
     """
-    if isinstance(val, dict):
-        return val
-    if pd.isna(val):
+    if pd.isna(val): 
         return {}
-    try:
-        return json.loads(val)
-    except Exception:
-        try:
-            return ast.literal_eval(val)
+    
+    if isinstance(val, str):
+        try: 
+            val = json.loads(val)
         except Exception:
-            return {}
-
-
-# =====================================================
-# Expand dictionary column ensuring all keys exist
-# Missing keys are filled with "absent"
-# =====================================================
-def expand_with_absent(df: pd.DataFrame, dict_column: str) -> pd.DataFrame:
-    """
-    Expands a dictionary column into multiple columns.
-    Ensures that all possible keys appear in every row,
-    filling missing values with 'absent'.
-    """
-    dicts = df[dict_column].apply(parse_dict_col)
-
-    all_keys = set().union(*dicts)
-
-    expanded = pd.DataFrame([
-        {key: d.get(key, "absent") for key in all_keys}
-        for d in dicts
-    ])
-
-    return expanded
-
+            try: 
+                val = ast.literal_eval(val)
+            except Exception: 
+                return {}
+                
+    if isinstance(val, dict): 
+        return val
+        
+    if isinstance(val, list):
+        dict_limpo = {}
+        for item in val:
+            if isinstance(item, dict):
+                if 'name' in item and 'value' in item:
+                    dict_limpo[str(item['name'])] = str(item['value'])
+                else:
+                    for k, v in item.items(): 
+                        dict_limpo[str(k)] = str(v)
+        return dict_limpo
+        
+    return {}
 
 # =====================================================
-# Create ML metadata (class and error type)
+# 2. EXTRATOR PARA FORMATO LONGO (Feature Extraction)
 # =====================================================
-def create_ml_metadata(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Creates classification metadata for ML results:
-    - class: bot / unsafe
-    - error_type: correct / FP / FN
-    """
-    meta = df[["pred", "target", "is_error"]].copy()
-
-    meta["class"] = meta["pred"].map({1: "bot", 0: "unsafe"})
-    meta["error_type"] = "correct"
-
-    meta.loc[
-        (meta["target"] == 0) & (meta["pred"] == 1),
-        "error_type"
-    ] = "FP"
-
-    meta.loc[
-        (meta["target"] == 1) & (meta["pred"] == 0),
-        "error_type"
-    ] = "FN"
-
-    return meta
-
-
-# =====================================================
-# Convert wide dataframe to long format
-# =====================================================
-def to_long_format(df: pd.DataFrame, meta_columns: List[str]) -> pd.DataFrame:
-    """
-    Converts expanded dataframe into long format:
-    one row per (key, value).
-    """
-    feature_columns = [c for c in df.columns if c not in meta_columns]
-
-    return df.melt(
-        id_vars=meta_columns,
-        value_vars=feature_columns,
-        var_name="key",
-        value_name="value"
-    )
-
-
-# =====================================================
-# Full preparation pipeline (headers + URL params)
-# =====================================================
-def prepare_dataset(
-    df: pd.DataFrame,
-    source: str,
-    is_ml: bool = False,
-    class_column: str = None
+def extract_features_to_long(
+    df: pd.DataFrame, 
+    source: str, 
+    is_ml: bool = False, 
+    class_column: str = "decision"
 ) -> pd.DataFrame:
     """
-    Prepares dataset for frequency analysis.
-    Expands headers and URL params, attaches metadata.
+    Extrai headers e params diretamente para o formato longo.
+    Garante que a classe seja sempre 'bots' ou 'unsafe'.
     """
+    records = []
+    
+    for _, row in df.iterrows():
+        # Definindo a classe baseado se é predição (ML) ou label real (Banco)
+        if is_ml:
+            pred = row.get("pred", -1)
+            cls = "bots" if pred == 1 else "unsafe"
+        else:
+            cls = str(row.get(class_column, "unknown")).lower().strip()
+            if cls == "bot": 
+                cls = "bots"
 
-    headers_df = expand_with_absent(df, "headers")
-    headers_df["feature_type"] = "header"
+        # Extraindo HEADERS
+        headers = parse_dict_col(row.get("headers", {}))
+        for k, v in headers.items():
+            records.append([source, "header", cls, str(k), str(v)])
 
-    params_df = expand_with_absent(df, "request")
-    params_df["feature_type"] = "param"
+        # Extraindo PARAMS
+        params = parse_dict_col(row.get("request", {}))
+        for k, v in params.items():
+            records.append([source, "param", cls, str(k), str(v)])
 
-    data = pd.concat([headers_df, params_df], ignore_index=True)
-
-    if is_ml:
-        meta = create_ml_metadata(df)
-        meta = pd.concat([meta, meta], ignore_index=True)
-        data = data.join(meta)
-    else:
-        data["class"] = df[class_column].values.repeat(2)
-        data["error_type"] = "database"
-
-    data["source"] = source
-    return data
-
+    colunas = ["source", "feature_type", "class", "key", "value"]
+    return pd.DataFrame(records, columns=colunas)
 
 # =====================================================
-# Compute absolute and percentage frequencies
+# 3. MOTOR DE MATEMÁTICA (Contagem e Probabilidade)
 # =====================================================
-def compute_frequencies(df_long: pd.DataFrame) -> pd.DataFrame:
-    """
-    Computes absolute and relative frequencies
-    for each (key, value).
-    """
-    freq = (
+def compute_frequencies(df_long: pd.DataFrame, class_totals: dict) -> pd.DataFrame:
+    if df_long.empty: 
+        return pd.DataFrame()
+        
+    counts = (
         df_long
-        .groupby(
-            ["source", "feature_type", "class", "error_type", "key", "value"],
-            dropna=False
-        )
+        .groupby(["source", "feature_type", "key", "value", "class"])
         .size()
-        .reset_index(name="count")
+        .unstack(fill_value=0)
+        .reset_index()
     )
 
-    totals = (
-        df_long
-        .groupby(
-            ["source", "feature_type", "class", "error_type", "key"],
-            dropna=False
-        )
-        .size()
-        .reset_index(name="total")
-    )
+    for col in ["bots", "unsafe"]:
+        if col not in counts.columns:
+            counts[col] = 0
 
-    freq = freq.merge(
-        totals,
-        on=["source", "feature_type", "class", "error_type", "key"]
-    )
+    counts = counts.rename(columns={"bots": "count_bots", "unsafe": "count_unsafe"})
 
-    freq["percentage"] = (freq["count"] / freq["total"]) * 100
-    return freq
+    # Função auxiliar para calcular a % relativa APENAS à classe
+    def get_pct(row, cls):
+        total_class_requests = class_totals.get(row["source"], {}).get(cls, 0)
+        if total_class_requests == 0:
+            return 0.0
+        return (row[f"count_{cls}"] / total_class_requests) * 100
 
+    counts["pct_bots"] = counts.apply(lambda r: get_pct(r, "bots"), axis=1)
+    counts["pct_unsafe"] = counts.apply(lambda r: get_pct(r, "unsafe"), axis=1)
+
+    return counts
 
 # =====================================================
-# High-level API function
+# 4. ORQUESTRADOR INTERNO DE DATA SCIENCE
 # =====================================================
-def analyze_frequencies(
-    df_analysis: pd.DataFrame,
-    df_database: pd.DataFrame
-) -> pd.DataFrame:
+def analyze_frequencies(df_analysis: pd.DataFrame, df_database: pd.DataFrame) -> pd.DataFrame:
     """
-    High-level function to compare feature frequencies
-    between ML analysis data and database context.
+    Processa e junta tudo, passando o total real de requisições por classe para a matemática.
     """
+    # 1. Contamos o total real de requisições por classe no ML (baseado na predição)
+    ml_bots = len(df_analysis[df_analysis["pred"] == 1])
+    ml_unsafe = len(df_analysis[df_analysis["pred"] == 0])
 
-    ml_data = prepare_dataset(
-        df_analysis,
-        source="ml",
-        is_ml=True
-    )
+    # 2. Contamos o total real no Banco de Dados (baseado no label original)
+    db_bots = df_database["decision"].astype(str).str.lower().str.strip().isin(['bot', 'bots', '1', '1.0']).sum()
+    db_unsafe = len(df_database) - db_bots
 
-    db_data = prepare_dataset(
-        df_database,
-        source="database",
-        is_ml=False,
-        class_column="decision"
-    )
+    class_totals = {
+        "ml": {"bots": ml_bots, "unsafe": ml_unsafe},
+        "database": {"bots": db_bots, "unsafe": db_unsafe}
+    }
 
-    combined = pd.concat([ml_data, db_data], ignore_index=True)
+    # 3. Extração normal
+    ml_long = extract_features_to_long(df_analysis, source="ml", is_ml=True)
+    db_long = extract_features_to_long(df_database, source="database", is_ml=False, class_column="decision")
 
-    meta_cols = ["source", "feature_type", "class", "error_type"]
-    combined_long = to_long_format(combined, meta_cols)
-
-    return compute_frequencies(combined_long)
+    combined_long = pd.concat([ml_long, db_long], ignore_index=True)
+    
+    # Passamos os totais para o motor matemático
+    return compute_frequencies(combined_long, class_totals)

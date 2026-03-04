@@ -197,22 +197,29 @@ async def query_mongo_requests(
             return f"No data found in MongoDB for hashes: {final_hashes}"
 
         df = pd.DataFrame(results)
+        df = df.drop(columns="_id")
 
-        try:
-            AnalysisContext.clear_memory()
-        except Exception as e:
-            return f"Error on clear memory: {e}"
+        file_id = uuid.uuid4().hex[:8]
+        filepath_dir = "temp_data"
+        filepath = f"{filepath_dir}/raw_{traffic_source}_{hash}_{file_id}.parquet"
 
-        AnalysisContext.set_mongo_data(
-            df=df, 
-            hashes=final_hashes,
-            source=traffic_source
-        )
+        os.makedirs(filepath_dir, exist_ok=True)
+        df.to_parquet(filepath)
+
+        # try:
+        #     AnalysisContext.clear_memory()
+        # except Exception as e:
+        #     return f"Error on clear memory: {e}"
+
+        # AnalysisContext.set_mongo_data(
+        #     df=df, 
+        #     hashes=final_hashes,
+        #     source=traffic_source
+        # )
 
         return (
-            f"SUCCESS: Loaded {len(df)} requests into AnalysisContext.\n"
+            f"SUCCESS: Saved file with {len(df)} HTTP requests into {filepath}.\n"
             f"Sources: {traffic_source} | Hashes: {len(final_hashes)}\n"
-            "Action Required: Delegate to 'Metrics Analyst' agent to run ML inference now."
         )
 
     except Exception as e:

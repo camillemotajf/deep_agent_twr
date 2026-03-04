@@ -17,6 +17,7 @@ from app.mentor_net.student_mlp import MLPStudent
 from app.mentor_net.trainer import Trainer
 from app.mentor_net.history_buffer import HistoryBuffer
 from app.mentor_net.http_data import HTTPLogDataset
+from app.services.attetion_mil_article import MILAttetionService
 from app.services.embedding_service import EmbeddingService
 from app.tools.context_store import AnalysisContext
 from app.services.mil_ia_service import ModelService
@@ -35,25 +36,30 @@ BASE_MODEL_PATH = "files/models"
 
 
 @tool
-def run_ml_inference_pipeline() -> str:
+def run_ml_inference_pipeline(file_path: str, traffic_source: str) -> str:
     """
-    EXECUTE FIRST. Runs MIL inference on data currently in Global Context.
-    Evaluation is performed at BAG LEVEL (correct for MIL).
+    MUST BE CALLED SECOND (after data extraction).
+    Runs the Multiple Instance Learning (MIL) inference pipeline on the raw dataset.
+    
+    Args:
+        file_path: The exact path to the .parquet file containing the raw HTTP requests.
+        traffic_source: The source domain (e.g., 'google', 'tiktok') to load the correct embedding model.
+        
+    Returns:
+        A string containing the inference metrics (Accuracy, False Positives, False Negatives) 
+        and the 'results_path' pointing to the newly generated .parquet file with predictions.
+        You MUST pass this 'results_path' to the Data Analyst agent for mismatch investigation.
     """
     try:
-        df = AnalysisContext.get_data_from_mongo()
-        traffic_source = AnalysisContext.get_traffic_source()
+        df = pd.read_parquet(file_path)
     except ValueError as e:
         return f"Error: No data loaded. Ask the Orchestrator to load a file first. ({e})"
 
     if df.empty:
         return "Error: Dataset is empty."
 
-    print(f"Starting MIL inference for traffic source: {traffic_source}")
-    print(f"Embedding config: {EMBEDDING_CONFIG}")
-
     try:
-        inference_service = ModelService(
+        inference_service = MILAttetionService(
             traffic_source=traffic_source,
             emb_config=EMBEDDING_CONFIG,
         )
@@ -62,48 +68,157 @@ def run_ml_inference_pipeline() -> str:
 
     try:
         df_results = inference_service.predict(df)
-        df_results_intance = inference_service.predict_with_instance_metrics(df)
+        results_path = file_path.replace("raw_", "results_")
+        df_results.to_parquet(results_path)
 
-        print("Results Instance: ")
-        print(df_results_intance)
-        print("Inference sample:")
-        print(df_results[["ip", "bag_id", "pred", "certeza_bag"]].head())
     except Exception as e:
         return f"Error during ML inference execution: {e}"
     
-    # ---------------------------------------------------------
-    # ETAPA E: AVALIAÇÃO DE DESEMPENHO (MÉTRICAS)
-    # ---------------------------------------------------------
-    acuracia = (df_results["decision_mil"] == df_results["pred"]).mean()
-    total_erros = (df_results["decision_mil"] != df_results["pred"]).sum()
-    
-    fp = len(df_results[(df_results["decision_mil"] == 0) & (df_results["pred"] == 1)])
-    fn = len(df_results[(df_results["decision_mil"] == 1) & (df_results["pred"] == 0)])
-    AnalysisContext.set_ml_results_data(df_results)
 
-    print(
-        "Inference completed | "
-        f"Lines: {len(df_results)} | "
-        # f"Bags: {bag_eval_df.shape[0] if bag_eval_df is not None else 0}"
-    )
+    acuracia = (df_results["decision_mil"] == df_results["mil_prediction"]).mean()
+    total_erros = (df_results["decision_mil"] != df_results["mil_prediction"]).sum()
+    
+    fp = len(df_results[(df_results["decision_mil"] == 0) & (df_results["mil_prediction"] == 1)])
+    fn = len(df_results[(df_results["decision_mil"] == 1) & (df_results["mil_prediction"] == 0)])
 
     return (
-        f"Inference completed using MIL '{traffic_source}' model.\n"
-        f"- Total samples (lines): {len(df_results)}\n"
-        f"- Model Accuracy (bag-level): {acuracia * 100:.2f}%\n"
-        f"- Total bag prediction errors: {total_erros}\n"
+        f"SUCCESS: MIL Inference completed for '{traffic_source}'.\n"
+        f"- Total samples evaluated: {len(df_results)}\n"
+        f"- Model Accuracy: {acuracia * 100:.2f}%\n"
+        f"- Total prediction errors: {total_erros}\n"
         f"- False Positives (real = unsafe | pred = bots): {fp}\n"
         f"- False Negatives (real = bots | pred = unsafe): {fn}\n\n"
-        "Next steps:\n"
-        "1. Call 'get_dataset_health_check' for bag-level stats.\n"
-        "2. Call 'query_anomalous_ids' to inspect specific bags.\n"
-        "3. Use attention weights to explain MIL decisions."
+        f"CRITICAL: The prediction results were saved to: {results_path}\n"
+        "Action Required: Pass this file path and the metrics to the 'bot-data-analyst' so they can investigate the False Positives and False Negatives."
     )
+    
+@tool
+async def compare_mismatch_frequencies(
+    predictions_file_path: str, 
+    excluded_hashes: List[str], 
+    traffic_source: str,
+    mismatch_type: str
+) -> str:
+    """
+    Analyzes the frequency of HTTP headers and URL parameters to find bot patterns.
+    
+    Args:
+        predictions_file_path: The .parquet file containing the ML predictions.
+        excluded_hashes: List of campaign hashes currently being analyzed by the ML Agent (to exclude from baseline).
+        traffic_source: The source domain (e.g., 'google', 'tiktok').
+        mismatch_type: Must be either "FP" (False Positives: real=unsafe, pred=bots) or "FN" (False Negatives: real=bots, pred=unsafe).
+        
+    Returns:
+        A JSON string detailing the most anomalous header and parameter keys/values compared to a baseline.
+    """
+    try:
+        df_analysis = pd.read_parquet(predictions_file_path)
+    except Exception as e:
+        return json.dumps({"status": "error", "message": f"Error loading predictions file: {e}"})
+
+    if mismatch_type == "FP":
+        df_focus = df_analysis[(df_analysis["decision_mil"] == 0) & (df_analysis["mil_prediction"] == 1)]
+    elif mismatch_type == "FN":
+        df_focus = df_analysis[(df_analysis["decision_mil"] == 1) & (df_analysis["mil_prediction"] == 0)]
+    else:
+        return json.dumps({'status': 'error', "message": f"Error: mismatch_type must be 'FP' or 'FN'."})
+
+    if df_focus.empty:
+        return json.dumps({"status": "error", "message": f"No {mismatch_type} mismatches found to analyze."})
+
+    hashes = await campaign_service.fetch_recent_active_campaign_hashes_excluding(
+        excluded_hashes=excluded_hashes, traffic_source=traffic_source
+    )
+    requests_baseline = await request_service.fetch_training_sample_by_hashes(
+        hashes=hashes, limit_each=1000
+    )
+    df_baseline = pd.DataFrame(requests_baseline)
+
+    print("Baseline: ", df_baseline.head())
+    print("Analise: ", df_focus.head())
+
+    df_focus_renamed = df_focus.rename(columns={
+        "mil_prediction": "pred",
+        "decision_mil": "target"   
+    })
+
+    frequencies = analyze_frequencies(df_analysis=df_focus_renamed, df_database=df_baseline)
+    print("Frequências: ", frequencies)
+
+    # 🚀 O Coração Matemático
+    frequencies = analyze_frequencies(df_analysis=df_focus_renamed, df_database=df_baseline)
+    
+    # ... (início da Tool continua igual, chamando analyze_frequencies) ...
+    
+    df_ml = frequencies[frequencies["source"] == "ml"].copy()
+    df_db = frequencies[frequencies["source"] == "database"].copy()
+
+    colunas_chave = ['feature_type', 'key', 'value']
+    colunas_metricas = ['count_bots', 'count_unsafe', 'pct_bots', 'pct_unsafe']
+    
+    df_ml = df_ml[colunas_chave + colunas_metricas]
+    df_db = df_db[colunas_chave + colunas_metricas]
+
+    # Cruzando as Predições do ML com a Realidade do Banco
+    comparison = pd.merge(
+        df_ml, 
+        df_db, 
+        on=colunas_chave, 
+        how='left', 
+        suffixes=('_mismatch', '_baseline')
+    )
+
+    # Limpando Nulos
+    for col in ['count_bots_baseline', 'count_unsafe_baseline', 'pct_bots_baseline', 'pct_unsafe_baseline']:
+        comparison[col] = comparison[col].fillna(0)
+
+    # A Vassoura Anti-Lixo
+    chaves_proibidas = ['pred', 'target', 'decision', 'decision_mil', 'mil_prediction', 'is_error', 'id', 'bag_id', 'embedding', 'attention_weight']
+    comparison = comparison[~comparison['key'].isin(chaves_proibidas)]
+
+    # Métrica de rank: Quantas vezes o erro apareceu no total (bots + unsafe)?
+    comparison["sort_metric"] = comparison["count_bots_mismatch"] + comparison["count_unsafe_mismatch"]
+    strong_signals = comparison.sort_values(by='sort_metric', ascending=False).head(15)
+
+    # 🚀 O EMPACOTAMENTO DOS DADOS (O que você pediu!)
+    def format_occurrences(row, suffix):
+        return {
+            "bots": {
+                "count": int(row[f"count_bots_{suffix}"]), 
+                "percentage": round(row[f"pct_bots_{suffix}"], 2)
+            },
+            "unsafe": {
+                "count": int(row[f"count_unsafe_{suffix}"]), 
+                "percentage": round(row[f"pct_unsafe_{suffix}"], 2)
+            }
+        }
+
+    strong_signals["total_occurrences_mismatch"] = strong_signals.apply(lambda x: format_occurrences(x, "mismatch"), axis=1)
+    strong_signals["total_occurrences_baseline"] = strong_signals.apply(lambda x: format_occurrences(x, "baseline"), axis=1)
+
+    # Filtrando apenas as colunas limpas para enviar para o JSON
+    colunas_finais_json = [
+        "feature_type", "key", "value", 
+        "total_occurrences_mismatch", 
+        "total_occurrences_baseline"
+    ]
+    
+    final_data = strong_signals[colunas_finais_json].to_dict(orient="records")
+
+    return json.dumps({
+        "status": "success",
+        "mismatch_type": mismatch_type,
+        "anomalous_patterns_comparison": final_data,
+        "hint": "Each feature shows its occurrence inside 'bots' and 'unsafe' classes individually. Compare mismatch percentages against baseline percentages to conclude if the ML hallucinated or if the human label was wrong."
+    }, indent=2)
+
 
 @tool
 async def get_context_data(
     excluded_hashes: List[str],
-    traffic_source: str
+    traffic_source: str,
+    data_result_path: str,
+    mismatch_type: str
 ) -> dict:
     """
     Fetches contextual traffic data, runs frequency analysis,
@@ -120,36 +235,54 @@ async def get_context_data(
         limit_each=1000
     )
 
-    df_database = pd.DataFrame(requests)
-    df_analysis = AnalysisContext.get_data_to_analise()
+    df_baseline = pd.DataFrame(requests)
+    df_analysis = pd.read_parquet(data_result_path)
 
-    if df_database.empty or df_analysis.empty:
-        return {
-            "status": "empty",
-            "message": "Not enough data to run analysis"
-        }
+    df_focus_renamed = df_analysis.rename(columns={
+        "mil_prediction": "pred",
+        "decision_mil": "target"
+    })
 
-    frequencies = analyze_frequencies(
-        df_analysis=df_analysis,
-        df_database=df_database
+    frequencies = analyze_frequencies(df_analysis=df_focus_renamed, df_database=df_baseline)
+    
+    df_ml = frequencies[frequencies["source"] == "ml"].copy()
+    df_db = frequencies[frequencies["source"] == "database"].copy()
+
+    colunas_chave = ['feature_type', 'key', 'value']
+    colunas_metricas = ['total_occurrences', 'pct_bots', 'pct_unsafe']
+    
+    df_ml = df_ml[colunas_chave + colunas_metricas]
+    df_db = df_db[colunas_chave + colunas_metricas]
+
+    # Cruzamos as predições do ML com a Realidade Histórica do Banco
+    comparison = pd.merge(
+        df_ml, 
+        df_db, 
+        on=colunas_chave, 
+        how='left', 
+        suffixes=('_mismatch', '_baseline')
     )
 
-    strong_bot_signals = (
-        frequencies[
-            (frequencies["class"] == "bot") &
-            (frequencies["value"] != "absent") &
-            (frequencies["percentage"] > 70)
-        ]
-        .sort_values("percentage", ascending=False)
-        .head(20)
-    )
+    # Limpando Nulos e Lixo
+    for col in ['total_occurrences_baseline', 'pct_bots_baseline', 'pct_unsafe_baseline']:
+        comparison[col] = comparison[col].fillna(0)
 
-    return {
-        "status": "ok",
-        "ml_rows": len(df_analysis),
-        "database_rows": len(df_database),
-        "strong_bot_signals": strong_bot_signals.to_dict(orient="records")
-    }
+    chaves_proibidas = ['pred', 'target', 'decision', 'decision_mil', 'mil_prediction', 'is_error', 'id', 'bag_id', 'embedding', 'attention_weight']
+    comparison = comparison[~comparison['key'].isin(chaves_proibidas)]
+
+    # Filtramos para pegar os padrões que apareceram mais vezes nos erros
+    strong_signals = comparison.sort_values(by='total_occurrences_mismatch', ascending=False).head(15)
+
+    # Arredondamento para não gastar tokens
+    for col in ['pct_bots_mismatch', 'pct_unsafe_mismatch', 'pct_bots_baseline', 'pct_unsafe_baseline']:
+        strong_signals[col] = strong_signals[col].round(1)
+
+    return json.dumps({
+        "status": "success",
+        "mismatch_type": mismatch_type,
+        "anomalous_patterns_comparison": strong_signals.to_dict(orient="records"),
+        "hint": "If mismatch_type=FP (model said bot), and pct_bots_baseline is HIGH, the human label was wrong. If pct_bots_baseline is LOW, the ML model hallucinated."
+    }, indent=2)
 
 
 

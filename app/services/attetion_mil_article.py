@@ -298,6 +298,8 @@ class MILAttetionService:
                   logger.info("Classification Model saved and versioning in s3")
                         
             return model
+
+      
             
 
       def predict(self, df: pd.DataFrame, model_loaded=None) -> pd.DataFrame:

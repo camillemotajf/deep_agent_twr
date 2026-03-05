@@ -11,7 +11,6 @@ class MongoRepository:
             ("metadata.site", 1),
             ("decision", 1),
         ])
-
       
       async def get_recent_requests_by_hashes(self, hashes: list[str], limit: int = 1000) -> list[dict]:
 
@@ -38,8 +37,19 @@ class MongoRepository:
 
             return cursor
       
+      def _make_query(decision_type: List, hashes, only_rule_id):
+            query = {
+                  "metadata.site": {"$in": hashes},
+                  "decision": {"$in": decision_type}
+            }
 
-      async def get_training_sample_by_hashes(self, hashes: list[str], limit_each: int = 10000) -> List[Dict]:
+            if only_rule_id:
+                  query["rule_id_list"] = {"$exists": True}
+
+            return query
+      
+
+      async def get_training_sample_by_hashes(self, hashes: list[str], limit_each: int = 10000, only_rule_id: bool = False) -> List[Dict]:
 
             projection = {
                  "_id": False,
@@ -51,24 +61,29 @@ class MongoRepository:
                   "ip": True
             } 
 
-            query_bots = {
-                  "metadata.site": {"$in": hashes},
-                  "decision": {"$in": ["bots"]}
-            } 
+            if only_rule_id:
+                 projection["rule_id_list"] = True
 
-            
-            query_unsafe = {
-                  "metadata.site": {"$in": hashes},
-                  "decision": {"$in": ["unsafe"]}
-            }
 
             results = await asyncio.gather(
-                  self.collection.find(query_bots, projection=projection)
+                  self.collection.find(
+                       self._make_query(decision_type=["bots", "bot"],
+                                         hashes=hashes, 
+                                         only_rule_id=only_rule_id
+                                    ), 
+                        projection=projection
+                  )
                   .limit(limit_each)
                   .sort("datetime", -1)
                   .to_list(),
 
-                  self.collection.find(query_unsafe, projection=projection)
+                  self.collection.find(
+                       self._make_query(decision_type=["unsafe"],
+                                         hashes=hashes, 
+                                         only_rule_id=only_rule_id
+                                    ), 
+                        projection=projection
+                  )
                   .limit(limit_each)
                   .sort("datetime", -1)
                   .to_list(),

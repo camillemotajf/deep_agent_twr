@@ -298,9 +298,30 @@ class MILAttetionService:
                   logger.info("Classification Model saved and versioning in s3")
                         
             return model
-
       
-            
+      def test_rule_id(self, df: pd.DataFrame, rule_id: int, model_loaded=None, percent=0.3) -> pd.DataFrame:
+            df["changed"] = False
+            print(df.columns)
+
+            idx_selected = df[
+                  df["rule_id_list"].apply(lambda x: isinstance(x, list) and rule_id in x)
+            ].index
+
+            idx_sorteados = idx_selected.to_series().sample(
+                  frac=percent,
+                  random_state=42 
+            ).index
+
+            df.loc[idx_sorteados, "decision"] = "unsafe"
+            df.loc[idx_sorteados, "changed"] = True
+
+            df_results = self.predict(df=df)
+            df_results["changed"] = df["changed"]
+            df_results["rule_id_list"] = df["rule_id_list"]
+
+            return df_results            
+
+
 
       def predict(self, df: pd.DataFrame, model_loaded=None) -> pd.DataFrame:
             

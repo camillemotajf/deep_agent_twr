@@ -29,7 +29,8 @@ class RequestService:
     async def fetch_training_sample_by_hashes(
         self,
         hashes: list[str],
-        limit_each: int = 10000
+        limit_each: int = 10000,
+        only_rule_id: bool = False
     ) -> List[Dict]:
         
         if not hashes:
@@ -38,7 +39,8 @@ class RequestService:
 
         results = await self.repository.get_training_sample_by_hashes(
             hashes=hashes, 
-            limit_each=limit_each
+            limit_each=limit_each,
+            only_rule_id=only_rule_id
         )
 
         return results

@@ -1,5 +1,6 @@
 import asyncio
 from typing import Dict, List
+from datetime import datetime
 
 class MongoRepository:
       def __init__(self, collection):
@@ -37,7 +38,7 @@ class MongoRepository:
 
             return cursor
       
-      def _make_query(decision_type: List, hashes, only_rule_id):
+      def _make_query(self, decision_type: List, hashes, only_rule_id):
             query = {
                   "metadata.site": {"$in": hashes},
                   "decision": {"$in": decision_type}
@@ -49,7 +50,13 @@ class MongoRepository:
             return query
       
 
-      async def get_training_sample_by_hashes(self, hashes: list[str], limit_each: int = 10000, only_rule_id: bool = False) -> List[Dict]:
+      async def get_training_sample_by_hashes(
+                self, hashes: list[str], 
+                start: datetime | None = None,
+                end: datetime | None = None, 
+                limit_each: int | None = None, 
+                only_rule_id: bool = False
+      ) -> List[Dict]:
 
             projection = {
                  "_id": False,
@@ -64,13 +71,12 @@ class MongoRepository:
             if only_rule_id:
                  projection["rule_id_list"] = True
 
+            print("Projection: ", projection)
+
 
             results = await asyncio.gather(
                   self.collection.find(
-                       self._make_query(decision_type=["bots", "bot"],
-                                         hashes=hashes, 
-                                         only_rule_id=only_rule_id
-                                    ), 
+                       self._make_query(["bots", "bot"], hashes, only_rule_id), 
                         projection=projection
                   )
                   .limit(limit_each)
@@ -78,10 +84,7 @@ class MongoRepository:
                   .to_list(),
 
                   self.collection.find(
-                       self._make_query(decision_type=["unsafe"],
-                                         hashes=hashes, 
-                                         only_rule_id=only_rule_id
-                                    ), 
+                       self._make_query(["unsafe"], hashes, only_rule_id), 
                         projection=projection
                   )
                   .limit(limit_each)

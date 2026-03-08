@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Dict, List
 
 from app.repositories.mongo_repository import MongoRepository
@@ -29,18 +30,21 @@ class RequestService:
     async def fetch_training_sample_by_hashes(
         self,
         hashes: list[str],
-        limit_each: int = 10000,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        limit_each: int | None = None,
         only_rule_id: bool = False
     ) -> List[Dict]:
         
         if not hashes:
             raise ValueError("")
         
-
         results = await self.repository.get_training_sample_by_hashes(
             hashes=hashes, 
             limit_each=limit_each,
-            only_rule_id=only_rule_id
+            only_rule_id=only_rule_id,
+            start=start,
+            end=end
         )
 
         return results

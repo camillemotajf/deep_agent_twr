@@ -51,58 +51,66 @@ class MongoRepository:
       
 
       async def get_training_sample_by_hashes(
-                self, hashes: list[str], 
-                start: datetime | None = None,
-                end: datetime | None = None, 
-                limit_each: int | None = None, 
-                only_rule_id: bool = False
+            self,
+            hashes: list[str],
+            start: datetime | None = None,
+            end: datetime | None = None,
+            limit_each: int | None = None,
+            only_rule_id: bool = False
       ) -> List[Dict]:
 
             projection = {
-                 "_id": False,
+                  "_id": False,
                   "headers": True,
                   "request": True,
                   "decision": True,
                   "ip_api_isp": True,
                   "datetime": True,
                   "ip": True
-            } 
+            }
 
             if only_rule_id:
-                 projection["rule_id_list"] = True
+                  projection["rule_id_list"] = True
 
-            print("Projection: ", projection)
+            def build_query(types):
+                  query = self._make_query(types, hashes, only_rule_id)
 
+                  if start or end:
+                        query["datetime"] = {}
+                        if start:
+                              query["datetime"]["$gte"] = start
+                        if end:
+                              query["datetime"]["$lte"] = end
 
-            results = await asyncio.gather(
-                  self.collection.find(
-                       self._make_query(["bots", "bot"], hashes, only_rule_id), 
+                  return query
+
+            async def fetch(types):
+                  cursor = self.collection.find(
+                        build_query(types),
                         projection=projection
-                  )
-                  .limit(limit_each)
-                  .sort("datetime", -1)
-                  .to_list(),
+                  ).sort("datetime", -1)
 
-                  self.collection.find(
-                       self._make_query(["unsafe"], hashes, only_rule_id), 
-                        projection=projection
-                  )
-                  .limit(limit_each)
-                  .sort("datetime", -1)
-                  .to_list(),
+                  if limit_each and not (start or end):
+                        cursor = cursor.limit(limit_each)
+
+
+                  return await cursor.to_list(length=None)
+
+            bots_list, unsafe_list = await asyncio.gather(
+                  fetch(["bots", "bot"]),
+                  fetch(["unsafe"])
             )
 
-            bots_list = results[0]
-            unsafe_list = results[1]
 
-            min_count = min(len(bots_list), len(unsafe_list))
-            if min_count == 0:
-                  return []
-            
-            final_bots = bots_list[:min_count]
-            final_unsafe = unsafe_list[:min_count]
+            if limit_each and not (start or end):
+                  min_count = min(len(bots_list), len(unsafe_list))
+                  if min_count == 0:
+                        return []
 
-            return final_bots + final_unsafe
+                  bots_list = bots_list[:min_count]
+                  unsafe_list = unsafe_list[:min_count]
+
+            return bots_list + unsafe_list
 
 
 

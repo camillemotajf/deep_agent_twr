@@ -91,6 +91,24 @@ def run_ml_inference_pipeline(file_path: str, traffic_source: str) -> str:
         f"CRITICAL: The prediction results were saved to: {results_path}\n"
         "Action Required: Pass this file path and the metrics to the 'bot-data-analyst' so they can investigate the False Positives and False Negatives."
     )
+
+@tool
+def clear_directory(file_path, predictions_file_path):
+    """
+    Clears the temporaries paths that have been used for analysis 
+    Called at the end of workflow of th data analyst
+    Args:
+        file_path: The exact path to the .parquet file containing the raw HTTP requests.
+        predictions_file_path: The .parquet file containing the ML predictions.
+    """
+
+    os.remove(file_path)
+    os.remove(predictions_file_path)
+
+    return {
+        "status": "sucess",
+        "message": "temporary files already deleted"
+    }
     
 @tool
 async def compare_mismatch_frequencies(

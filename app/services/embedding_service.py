@@ -85,8 +85,8 @@ class TransformerEmbedder(BaseEmbedder):
             if isinstance(params, dict):
                   for k, v in params.items():
                         v_str = str(v).strip()
-                  if not any(re.match(p, v_str) for p in hash_patterns):
-                        clean_params.append(f"{k}={v}")
+                        if not any(re.match(p, v_str) for p in hash_patterns):
+                              clean_params.append(f"{k}={v}")
             
             params_str = " ".join(clean_params) if clean_params else "no_params"
 

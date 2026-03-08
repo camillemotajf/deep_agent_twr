@@ -17,7 +17,7 @@ pandas
 numpy
 matplotlib
 seaborn
-sentence_transformers
+sentence-transformers
 psutil
 gensim
 user_agents
@@ -26,3 +26,5 @@ pytz
 botocore
 pyarrow
 langfuse
+shodan
+plotly

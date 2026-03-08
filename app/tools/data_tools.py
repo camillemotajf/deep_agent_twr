@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Dict, List
 import uuid
 import json
@@ -135,40 +136,10 @@ async def traffic_source_by_campaign(
 async def query_requests_for_training(
     traffic_source: str | None = None,
     hashes: list[str] | None = None,
-    limit: int = 10000
-) -> list[dict]:
-    """
-    Docstring para query_requests_for_training
-    
-    :param traffic_source: Descrição
-    :type traffic_source: str | None
-    :param hashes: Descrição
-    :type hashes: list[str] | None
-    :param limit: Descrição
-    :type limit: int
-    :return: Descrição
-    :rtype: list[dict]
-    """
-
-    if not traffic_source and not hashes:
-        return "Error: You must provide at least one of the oprions: traffic_source or hashes"
-    
-    elif traffic_source:
-        campaigns = await campaign_service.fetch_recent_active_campaigns(traffic_source=traffic_source, limit=50)
-    elif hashes:
-        campaigns = hashes
-    
-    results = await request_service.fetch_training_sample_by_hashes(campaigns)
-
-    return results
-
-
-@tool
-async def query_mongo_requests(
-    traffic_source: str,
-    hash: str | None = None,
-    hashes: list[str] | None = None,
-    limit: int = 1000
+    start: datetime | None = None,
+    end:  datetime | None = None,
+    limit_campaigns: int = 100,
+    limit_request: int = 10000
 ) -> list[dict]:
     """
     Retrieves recent MongoDB HTTP requests and saves them to a temporary file.
@@ -181,45 +152,93 @@ async def query_mongo_requests(
     - Returns only requests with decision bots or unsafe
     """
 
-    final_hashes = hashes or ([hash] if hash else [])
+    if not traffic_source and not hashes:
+        return "Error: You must provide at least one of the oprions: traffic_source or hashes"
+    
+    elif traffic_source:
+        campaigns = await campaign_service.fetch_recent_active_campaigns(
+            traffic_source=traffic_source, 
+            limit=50
+        )
+    elif hashes:
+        campaigns = hashes
+    
+    results = await request_service.fetch_training_sample_by_hashes(
+        hashes=campaigns,
+        start=start,
+        end=end,
+        limit_each=limit_request
+    )
 
-    if not final_hashes:
-        return "Error: You must provide at least one 'hash' or a list of 'hashes'."
+    return results
+
+
+@tool
+async def query_mongo_requests(
+    traffic_source: str | None = None,
+    hashes: list[str] | None = None,
+    start: datetime | None = None,
+    end:  datetime | None = None,
+    limit_campaigns: int = 100,
+    limit_request: int = 10000
+) -> list[dict]:
+    """
+    Retrieves recent MongoDB HTTP requests and saves them to a temporary file.
+    Returns the file path to be used by analysis tools.
+    
+    Rules:
+    - Use the 'traffic source' when it is provided (e.g. 'google', 'outbrain', ...)
+    - Use 'hashes' to provide a list of campaigns to analise (e.g. ['9xvp496ldw', 'u1dowjfl8z'])
+    - Use 'start' and 'end' in datetime when a time is requested. (e.g: 'last week', 'last 3 days', 'last 15 min')
+    - Use 'limit_request' when a datetime time is not provided
+    """
+
+    if not traffic_source and not hashes:
+        return "Error: You must provide at least one of the oprions: traffic_source or hashes"
+    
+    elif traffic_source:
+        campaigns = await campaign_service.fetch_recent_active_campaigns(
+            traffic_source=traffic_source, 
+            limit=limit_campaigns
+        )
+    elif hashes:
+        campaigns = hashes
+
+    if not campaigns:
+        return {
+                    "status: error",
+                    "message: You must provide at least one 'hash' or a list of 'hashes'."
+                }
+    
+    print("Start Date: ", start)
+    print("End date: ", end)
 
     try:
-        cursor = await request_service.fetch_recent_flagged_requests(
-            hashes=final_hashes,
-            limit=limit
+        results = await request_service.fetch_training_sample_by_hashes(
+            hashes=campaigns,
+            start=start,
+            end=end,
+            limit_each=limit_request
         )
-        results = await cursor.to_list(length=limit)
+
+        print("Results: ", len(results))
 
         if not results:
-            return f"No data found in MongoDB for hashes: {final_hashes}"
+            return f"No data found in MongoDB for hashes: {campaigns}"
 
         df = pd.DataFrame(results)
-        df = df.drop(columns="_id")
+        df = df.drop(columns="_id", errors="ignore")
 
         file_id = uuid.uuid4().hex[:8]
         filepath_dir = "temp_data"
-        filepath = f"{filepath_dir}/raw_{traffic_source}_{hash}_{file_id}.parquet"
+        filepath = f"{filepath_dir}/raw_{traffic_source}_{file_id}.parquet"
 
         os.makedirs(filepath_dir, exist_ok=True)
         df.to_parquet(filepath)
 
-        # try:
-        #     AnalysisContext.clear_memory()
-        # except Exception as e:
-        #     return f"Error on clear memory: {e}"
-
-        # AnalysisContext.set_mongo_data(
-        #     df=df, 
-        #     hashes=final_hashes,
-        #     source=traffic_source
-        # )
-
         return (
             f"SUCCESS: Saved file with {len(df)} HTTP requests into {filepath}.\n"
-            f"Sources: {traffic_source} | Hashes: {len(final_hashes)}\n"
+            f"Sources: {traffic_source} | Hashes: {len(campaigns)}\n"
         )
 
     except Exception as e:

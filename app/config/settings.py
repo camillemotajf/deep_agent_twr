@@ -7,6 +7,9 @@ class Settings(BaseSettings):
     DB_NAME: str
     TRANSFORMER_MODEL: str
     REPOSITORY_PATH: str
+    SHODAN_API_KEY: str
+    API_BROWSER_KEY: str
+    API_BROWSER_URL: str
 
     class Config:
         env_file = ".env"  

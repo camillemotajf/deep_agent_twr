@@ -4,6 +4,7 @@ from langchain.tools import tool
 import pandas as pd
 import json
 from bson import json_util
+from sentence_transformers import SentenceTransformer
 import torch
 from torch.utils.data import DataLoader
 import os
@@ -17,7 +18,9 @@ from app.mentor_net.student_mlp import MLPStudent
 from app.mentor_net.trainer import Trainer
 from app.mentor_net.history_buffer import HistoryBuffer
 from app.mentor_net.http_data import HTTPLogDataset
+from app.services import clustering_service
 from app.services.attetion_mil_article import MILAttetionService
+from app.services.clustering_service import RequestClusteringPipeline
 from app.services.embedding_service import EmbeddingService
 from app.tools.context_store import AnalysisContext
 from app.services.mil_ia_service import ModelService
@@ -34,6 +37,22 @@ TRANSFORMER_MODEL = "all-MiniLm-L6-v2"
 FATSTEXT_PATH = f"{MODELS_PATH}/embedding"
 BASE_MODEL_PATH = "files/models"
 
+model = SentenceTransformer('all-MiniLM-L6-v2')
+clustering_service = RequestClusteringPipeline(
+      embedding_model=model,
+      max_header_freq=0.7,
+      min_cluster_size=30
+)
+
+@tool
+def analyze_traffic_patterns(filepath: str) -> str:
+    """
+    Ferramenta de Machine Learning especializada em encontrar botnets e ataques.
+    Use esta ferramenta passando APENAS o caminho do arquivo parquet (.parquet).
+    Ela retornará um JSON classificando o tráfego em 'bot', 'unsafe', 'mixed' ou 'noise_anomaly'.
+    """
+    # A ferramenta apenas repassa o caminho para o método do serviço
+    return clustering_service.analyze_traffic_for_llm(filepath)
 
 @tool
 def run_ml_inference_pipeline(file_path: str, traffic_source: str) -> str:

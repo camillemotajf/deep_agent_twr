@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     SHODAN_API_KEY: str
     API_BROWSER_KEY: str
     API_BROWSER_URL: str
+    TAVILY_API_KEY: str
 
     class Config:
         env_file = ".env"  

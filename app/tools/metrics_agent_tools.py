@@ -1,9 +1,11 @@
-from typing import List
+import ast
+from typing import List, Optional
 
 from langchain.tools import tool
 import pandas as pd
 import json
 from bson import json_util
+import requests
 from sentence_transformers import SentenceTransformer
 import torch
 from torch.utils.data import DataLoader
@@ -18,16 +20,17 @@ from app.mentor_net.student_mlp import MLPStudent
 from app.mentor_net.trainer import Trainer
 from app.mentor_net.history_buffer import HistoryBuffer
 from app.mentor_net.http_data import HTTPLogDataset
-from app.services import clustering_service
 from app.services.attetion_mil_article import MILAttetionService
 from app.services.clustering_service import RequestClusteringPipeline
 from app.services.embedding_service import EmbeddingService
 from app.tools.context_store import AnalysisContext
 from app.services.mil_ia_service import ModelService
 from app.config.settings import settings
+from langchain_community.tools import DuckDuckGoSearchRun, TavilySearchResults
 
 from app.config.container import campaign_service, request_service
 from app.utils.analise import analyze_frequencies
+tavily_search = TavilySearchResults(max_results=1)
 
 
 MODELS_PATH = f"G:/Meu Drive/TWR/data"
@@ -37,13 +40,156 @@ TRANSFORMER_MODEL = "all-MiniLm-L6-v2"
 FATSTEXT_PATH = f"{MODELS_PATH}/embedding"
 BASE_MODEL_PATH = "files/models"
 
-model = SentenceTransformer('all-MiniLM-L6-v2')
-clustering_service = RequestClusteringPipeline(
-      embedding_model=model,
-      max_header_freq=0.7,
-      min_cluster_size=30
+clustering_service = RequestClusteringPipeline()
+
+tavily_tool = TavilySearchResults(
+    max_results=2, 
+    description=(
+        "A web search tool optimized for threat research, OSINT, and cybersecurity investigations. "
+        "Use this tool to search the web for information on ISPs, User-Agents, IP reputations, and others Browsers headers pattern with"
+        "malware signatures, and general threat intelligence based on the artifacts extracted."
+    )
 )
 
+@tool()
+def extract_suspicious_artifacts(
+    filepath: str, 
+    fields_to_extract: Optional[List[str]] = None, 
+    n_values: int = 3
+) -> str:
+    """
+    Reads the anomaly .parquet file and extracts the most frequent (Top N) values from specific HTTP headers, User-Agents, or ISPs.
+    The Agent MUST use this tool first to gather the suspicious artifacts before utilizing web search tools for threat intelligence.
+
+    Args:
+        filepath (str): Path to the .parquet file containing the anomalous HTTP requests.
+        fields_to_extract (Optional[List[str]]): List of specific fields or headers to extract (e.g., ["user-agent", "ip_api_isp", "x-body-platform"]). Defaults to ["user-agent", "ip_api_isp"] if not provided.
+        n_values (int): The number of top most frequent values to return per field. Default is 3.
+
+    Returns:
+        str: A JSON-formatted string containing the extracted top values for each requested field.
+    """
+    
+    if not fields_to_extract:
+        fields_to_extract = ["user-agent", "ip_api_isp"]
+        
+    try:
+        df = pd.read_parquet(filepath)
+        report = {"status": "success", "extracted_artifacts": {}}
+        
+        # Reidratação segura dos headers
+        if "headers" in df.columns:
+            def safe_parse(val):
+                if isinstance(val, dict): return val
+                if isinstance(val, str):
+                    try: return json.loads(val)
+                    except: 
+                        try: return ast.literal_eval(val)
+                        except: return {}
+                return {}
+            df["headers"] = df["headers"].apply(safe_parse)
+
+        for field in fields_to_extract:
+            field_lower = field.lower()
+            extracted_vals = []
+            
+            df_cols_lower = {str(c).lower(): c for c in df.columns}
+            if field_lower in df_cols_lower:
+                real_col = df_cols_lower[field_lower]
+                top_values = df[real_col].dropna().value_counts().head(n_values).index.tolist()
+                extracted_vals = [str(v).strip() for v in top_values if str(v).strip().lower() not in ["none", "nan", "unknown", ""]]
+            
+            elif "headers" in df.columns:
+                extracted = []
+                for h_dict in df["headers"]:
+                    if isinstance(h_dict, dict):
+                        h_norm = {str(k).lower(): str(v).strip() for k, v in h_dict.items()}
+                        val = h_norm.get(field_lower) 
+                        if val: extracted.append(val)
+                if extracted:
+                    extracted_vals = pd.Series(extracted).value_counts().head(n_values).index.tolist()
+            
+            report["extracted_artifacts"][field] = extracted_vals if extracted_vals else "Nenhum valor encontrado."
+            
+        return json.dumps(report, indent=2, ensure_ascii=False)
+        
+    except Exception as e:
+        return json.dumps({"status": "error", "message": f"{type(e).__name__}: {str(e)}"})
+
+# @tool()
+# def investigate_threat_actors(filepath: str, fields_to_investigate: Optional[List[str]] = None, n_values_to_investigate: int = 2, content_size: int = 400) -> str:
+#     """
+#     Performs web OSINT on anomalous HTTP traffic to identify botnets, scanners, and malicious infrastructure. 
+#     Use this tool to investigate the reputation of specific ISPs, User-Agents, or suspicious custom headers.
+
+#     Args:
+#         filepath (str): Path to the .parquet file containing the anomalous requests.
+#         fields_to_investigate (Optional[List[str]]): Specific headers or columns to investigate 
+#             (e.g., ["user-agent", "ip_api_isp", "x-body-platform"]). Defaults to standard targets if None.
+#         n_values_to_investigate (int): Number of top frequent values to extract and search per field. Default is 2.
+#         content_size (int): Maximum character limit for each search result to save LLM context tokens. Default is 400.
+
+#     Returns:
+#         str: A JSON-formatted string containing the OSINT search results for the targeted artifacts.
+#     """
+
+#     if not fields_to_investigate:
+#         fields_to_investigate = ["user-agent", "ip_api_isp"]
+
+#         try:
+#             df = pd.read_parquet(filepath)
+#             report = {"status": "sucess", "investigations": {}}
+
+#             print("Fields to investigate: ", fields_to_investigate)
+#             for field in fields_to_investigate:
+#                 field_lower = field.lower()
+#                 target_values = []
+#                 report["investigations"][field] = {}
+
+#                 if field_lower in [c.lower() for c in df.columns]:
+#                     real_col = [c for c in df.columns if c.lower() == field_lower][0]
+#                     top_values = df[real_col].dropna().value_counts().head(n_values_to_investigate).index.to_list()
+#                     target_values = [str(v).strip() for v in top_values if str(v).strip().lower() not in ["none", "nan", "unknown", ""]]
+#                 else:
+#                     extracted = []
+#                     for headers in df["headers"]:
+#                         if isinstance(headers, dict):
+#                             h_norm = {str(k).lower(): str(v).strip() for k, v in headers.items()}
+#                             if field_lower in h_norm:
+#                                 extracted.append(h_norm[field_lower])
+
+#                     if extracted:
+#                         target_values = pd.Series(extracted).value_counts().head(n_values_to_investigate).index.tolist()
+
+#                 for val in target_values:
+#                     if "isp" in field_lower:
+#                         query = f'Is the ISP "{val}" known for bad reputation, spam, botnets or malicious traffic?'
+#                         print(query)
+#                     elif "user-agent" in field_lower:
+#                         query = f'What is the exact purpose of the User-Agent "{val}"? Is it a bot, crawler, or scanner? Exclude CVEs.'
+#                         print(query)
+#                     else:
+#                         query = f'Cybersecurity context: What does the HTTP header "{field}" with value "{val}" indicate? Is it used by specific bots, scanners, or malware?'
+#                         print(query)
+
+#                     try:
+#                         res = tavily_search.invoke({"query": query})
+#                         print(res)
+#                         if res and isinstance(res, list):
+#                             content = res[0].get('content', '')
+
+#                             val_camp = val[:20]
+
+#                             report["investigations"][field][val_camp] = content[:content_size] + "..." if len(content) > 400 else content
+#                         else:
+#                             report["investigations"][field][val_camp] = "No clearly results from Tavily."
+#                     except Exception as e:
+#                         report["investigations"][field][val_camp] = f"ERROR in search: {str(e)}."
+
+#             return json.dumps(report, indent=2, ensure_ascii=False)
+
+#         except Exception as e:
+#             return json.dumps({"status": "error", "message": str(e)})
 @tool
 def analyze_traffic_patterns(filepath: str) -> str:
     """
@@ -52,6 +198,7 @@ def analyze_traffic_patterns(filepath: str) -> str:
     Ela retornará um JSON classificando o tráfego em 'bot', 'unsafe', 'mixed' ou 'noise_anomaly'.
     """
     # A ferramenta apenas repassa o caminho para o método do serviço
+    # clustering_service.run(filepath)
     return clustering_service.analyze_traffic_for_llm(filepath)
 
 @tool

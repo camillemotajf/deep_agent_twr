@@ -1,14 +1,9 @@
 import sys
-import logging
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import Dataset
-
-
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s', stream=sys.stdout)
-logger = logging.getLogger(__name__)
 
 LABEL_MAP = {"bots": 0, "unsafe": 1}
 

@@ -1,28 +1,32 @@
 import json
-import logging
-
 import pandas as pd
 import numpy as np
 from collections import defaultdict
+from sentence_transformers import SentenceTransformer
 from sklearn.manifold import TSNE
 import hdbscan
 import plotly.express as px
 from app.utils.analise import parse_dict_col
-from transformers import logging as hf_logging
+import logging
 
-hf_logging.set_verbosity_error()
-logging.getLogger("sentence_transformers").setLevel(logging.ERROR)
-logging.getLogger("urllib3").setLevel(logging.ERROR)
+# Desativa logs de nível INFO das bibliotecas de rede e do Hugging Face
+logging.getLogger("urllib3").setLevel(logging.WARNING)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("huggingface_hub").setLevel(logging.WARNING)
+logging.getLogger("sentence_transformers").setLevel(logging.WARNING)
+
 
 class RequestClusteringPipeline:
-    def __init__(self, embedding_model, max_header_freq=0.7, tsne_perplexity=30, min_cluster_size=30, min_samples=10, cluster_threshold=0.6):
+    def __init__(self, embedding_model_name: str = "all-MiniLM-L6-v2", max_header_freq=0.7, tsne_perplexity=30, min_cluster_size=30, min_samples=10, cluster_threshold=0.6):
         """
         Inicializa o pipeline de clusterização e visualização.
         
         :param embedding_model: Modelo base carregado (ex: SentenceTransformer('all-MiniLM-L6-v2'))
         :param max_header_freq: Frequência máxima (0 a 1) para manter um header.
         """
-        self.model = embedding_model
+
+        model = SentenceTransformer(embedding_model_name)
+        self.model = model
         self.max_header_freq = max_header_freq
         self.tsne_perplexity = tsne_perplexity
         self.min_cluster_size = min_cluster_size
@@ -36,7 +40,6 @@ class RequestClusteringPipeline:
         self.clusterer = None
 
     def _filter_headers(self, df):
-        print("1. Calculando cardinalidade e filtrando headers...")
         n_samples = len(df)
         value_sets = defaultdict(set)
 
@@ -49,11 +52,10 @@ class RequestClusteringPipeline:
             k for k, values in value_sets.items()
             if len(values) < self.max_header_freq * n_samples
         }
-        print(f"   -> Headers mantidos ({len(self.important_headers)}):", self.important_headers)
 
         def apply_filter(headers):
             if not isinstance(headers, dict): return {}
-            return {k: v for k, v in headers.items() if k in self.important_headers}
+            return {k: v for k, v in headers.items() if k in self.important_headers and not "user-agent" in k.lower()}
 
         df["filtered_headers"] = df["headers"].apply(apply_filter)
         return df
@@ -86,21 +88,18 @@ class RequestClusteringPipeline:
         # print("   -> Gerando embeddings RAW...")
         # embeddings_raw = self.model.encode(df["text"].tolist(), batch_size=64, show_progress_bar=True)
         
-        print("   -> Gerando embeddings FILTERED...")
-        embeddings_filtered = self.model.encode(df["text_filtered"].tolist(), batch_size=64, show_progress_bar=True)
+        embeddings_filtered = self.model.encode(df["text_filtered"].tolist(), batch_size=64, show_progress_bar=False)
         
         # return df, embeddings_raw, embeddings_filtered
         return df, embeddings_filtered
 
     def reduce_dimensions(self, embeddings_filtered):
-        print("3. Aplicando t-SNE (Redução de dimensionalidade)...")
         tsne = TSNE(n_components=3, perplexity=self.tsne_perplexity, random_state=42)
         
         # self.tsne_raw_coords = tsne.fit_transform(embeddings_raw)
         self.tsne_filtered_coords = tsne.fit_transform(embeddings_filtered)
 
     def cluster_and_classify(self, df, embeddings_filtered):
-        print("4. Clusterizando com HDBSCAN e classificando...")
         self.clusterer = hdbscan.HDBSCAN(
             min_cluster_size=self.min_cluster_size,
             min_samples=self.min_samples
@@ -127,7 +126,7 @@ class RequestClusteringPipeline:
         def apply_threshold(row):
             total = row.sum()
             if total == 0:
-                return "mixed"
+                return "outlier"
             
             bot_ratio = row.get("bot", 0) / total
             unsafe_ratio = row.get("unsafe", 0) / total
@@ -213,13 +212,23 @@ class RequestClusteringPipeline:
     #     return df
 
     def visualize(self, df):
-        print("5. Gerando visualizações 3D...")
         plot_df = df.copy()
         plot_df["x"] = self.tsne_filtered_coords[:, 0]
         plot_df["y"] = self.tsne_filtered_coords[:, 1]
         plot_df["z"] = self.tsne_filtered_coords[:, 2]
 
-        # Gráfico 1: Todos os dados classificados
+        # NOVO GRÁFICO: Dados classificados pela coluna "decision"
+        if "decision" in plot_df.columns:
+            fig_decision = px.scatter_3d(
+                plot_df, x="x", y="y", z="z", color="decision",
+                title="t-SNE visualization - by Decision Label"
+            )
+            fig_decision.update_traces(marker=dict(size=3, opacity=0.7))
+            fig_decision.show()
+        else:
+            print("Aviso: A coluna 'decision' não foi encontrada no DataFrame.")
+
+        # Gráfico 1: Todos os dados classificados (Original)
         fig_all = px.scatter_3d(
             plot_df, x="x", y="y", z="z", color="classification",
             color_discrete_map={
@@ -234,7 +243,7 @@ class RequestClusteringPipeline:
         fig_all.update_traces(marker=dict(size=3, opacity=0.7))
         fig_all.show()
 
-        # Gráfico 2: Apenas os erros
+        # Gráfico 2: Apenas os erros (Original)
         errors_df = plot_df[plot_df["classification"].isin(["unsafe_pred_bot", "bot_pred_unsafe"])]
         if not errors_df.empty:
             fig_errors = px.scatter_3d(
@@ -384,6 +393,19 @@ class RequestClusteringPipeline:
     #             "message": str(e)
     #         })
 
+    def filter_investiogation_data(self, df_final):
+        mask = (
+                df_final["classification"].isin(["bot_pred_unsafe", "unsafe_pred_bot"]) |
+                df_final["cluster_label"].isin(["mixed", "noise_anomaly"])
+            )
+
+        df_investigacao = df_final[mask].copy()
+        
+        colunas_uteis = ["decision", "cluster", "cluster_label", "classification", "headers", "request", "ip_api_isp"]
+        df_investigacao = df_investigacao[colunas_uteis]
+        df_investigacao = df_final[mask].copy()
+
+        return df_investigacao
 
     def analyze_traffic_for_llm(self, filepath) -> str:
         try:
@@ -398,13 +420,19 @@ class RequestClusteringPipeline:
             
             df_processed, emb_filtered = self.preprocess_and_encode(df)
             df_final = self.cluster_and_classify(df_processed, emb_filtered)
+            filepath_tosave = filepath.replace("raw_", "processed_")
+
+            df_invest = self.filter_investiogation_data(df_final)
+            df_invest.to_parquet(filepath_tosave)
             
             contagem_classificacao = df_final["classification"].value_counts().to_dict()
             
             report = {
                 "status": "success",
                 "total_samples": len(df_final),
-                "classification_counts": contagem_classificacao
+                "classification_counts": contagem_classificacao,
+                "investigation_file_path": filepath_tosave, # Passa o novo caminho dinâmico para o LLM
+                "investigation_targets_count": len(df_invest)
             }
             
             return json.dumps(report, indent=2, ensure_ascii=False)

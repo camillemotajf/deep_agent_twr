@@ -1,44 +1,37 @@
 import ast
-from typing import List, Optional
-
+from typing import List, Optional, Dict, Any
 from langchain.tools import tool
 import pandas as pd
 import json
-from bson import json_util
-import requests
-from sentence_transformers import SentenceTransformer
-import torch
-from torch.utils.data import DataLoader
+# from sentence_transformers import SentenceTransformer
+# from torch.utils.data import DataLoader
 import os
-import seaborn as sns
-import matplotlib.pyplot as plt
 
-from app.mentor_net.mentor_preditor import MentorNetPredictor
-from app.services import ml_noise_service
-from app.mentor_net.mentornet import MentorNet
-from app.mentor_net.student_mlp import MLPStudent
-from app.mentor_net.trainer import Trainer
-from app.mentor_net.history_buffer import HistoryBuffer
-from app.mentor_net.http_data import HTTPLogDataset
+# from app.mentor_net.mentor_preditor import MentorNetPredictor
+# from app.mentor_net.mentornet import MentorNet
+# from app.mentor_net.student_mlp import MLPStudent
+# from app.mentor_net.trainer import Trainer
+# from app.mentor_net.history_buffer import HistoryBuffer
+# from app.mentor_net.http_data import HTTPLogDataset
 from app.services.attetion_mil_article import MILAttetionService
 from app.services.clustering_service import RequestClusteringPipeline
-from app.services.embedding_service import EmbeddingService
+# from app.services.embedding_service import EmbeddingService
 from app.tools.context_store import AnalysisContext
-from app.services.mil_ia_service import ModelService
+# from app.services.mil_ia_service import ModelService
 from app.config.settings import settings
-from langchain_community.tools import DuckDuckGoSearchRun, TavilySearchResults
+from langchain_community.tools import TavilySearchResults
 
 from app.config.container import campaign_service, request_service
-from app.utils.analise import analyze_frequencies
+from app.utils.analise import analyze_frequencies, parse_dict_col
 tavily_search = TavilySearchResults(max_results=1)
 
 
-MODELS_PATH = f"G:/Meu Drive/TWR/data"
-LABEL_MAP = {"bots": 0, "unsafe": 1, "bot": 0}
-EMBEDDING_CONFIG = "fasttext"
-TRANSFORMER_MODEL = "all-MiniLm-L6-v2"
-FATSTEXT_PATH = f"{MODELS_PATH}/embedding"
-BASE_MODEL_PATH = "files/models"
+# MODELS_PATH = f"G:/Meu Drive/TWR/data"
+# LABEL_MAP = {"bots": 0, "unsafe": 1, "bot": 0}
+# EMBEDDING_CONFIG = "fasttext"
+# TRANSFORMER_MODEL = "all-MiniLm-L6-v2"
+# FATSTEXT_PATH = f"{MODELS_PATH}/embedding"
+# BASE_MODEL_PATH = "files/models"
 
 clustering_service = RequestClusteringPipeline()
 
@@ -51,11 +44,13 @@ tavily_tool = TavilySearchResults(
     )
 )
 
+    
 @tool()
 def extract_suspicious_artifacts(
     filepath: str, 
     fields_to_extract: Optional[List[str]] = None, 
-    n_values: int = 3
+    n_values: int = 15,
+    cluster_column: str = "classification" # NOME DA COLUNA DO SEU MODELO (ex: 'cluster', 'label', 'classification')
 ) -> str:
     """
     Reads the anomaly .parquet file and extracts the most frequent (Top N) values from specific HTTP headers, User-Agents, or ISPs.
@@ -71,13 +66,12 @@ def extract_suspicious_artifacts(
     """
     
     if not fields_to_extract:
-        fields_to_extract = ["user-agent", "ip_api_isp"]
+        fields_to_extract = ["user-agent", "ip_api_isp", "sec-fetch-dest", "sec-fetch-site"]
         
     try:
         df = pd.read_parquet(filepath)
-        report = {"status": "success", "extracted_artifacts": {}}
         
-        # Reidratação segura dos headers
+        # 1. Reidratação da coluna 'headers'
         if "headers" in df.columns:
             def safe_parse(val):
                 if isinstance(val, dict): return val
@@ -89,116 +83,80 @@ def extract_suspicious_artifacts(
                 return {}
             df["headers"] = df["headers"].apply(safe_parse)
 
-        for field in fields_to_extract:
-            field_lower = field.lower()
-            extracted_vals = []
+        # 2. Função interna para extrair os Top N de um "pedaço" do DataFrame
+        def get_top_artifacts(sub_df):
+            extracted_data = {}
+            for field in fields_to_extract:
+                field_lower = field.lower()
+                extracted_vals = []
+                
+                df_cols_lower = {str(c).lower(): c for c in sub_df.columns}
+                if field_lower in df_cols_lower:
+                    real_col = df_cols_lower[field_lower]
+                    top_values = sub_df[real_col].dropna().value_counts().head(n_values).index.tolist()
+                    extracted_vals = [str(v).strip() for v in top_values if str(v).strip().lower() not in ["none", "nan", "unknown", ""]]
+                
+                elif "headers" in sub_df.columns:
+                    extracted = []
+                    for h_dict in sub_df["headers"]:
+                        if isinstance(h_dict, dict):
+                            h_norm = {str(k).lower(): str(v).strip() for k, v in h_dict.items()}
+                            val = h_norm.get(field_lower) 
+                            if val: extracted.append(val)
+                    if extracted:
+                        top_values = pd.Series(extracted).value_counts().head(n_values).index.tolist()
+                        extracted_vals = [str(v).strip() for v in top_values if str(v).strip().lower() not in ["none", "nan", "unknown", ""]]
+                
+                if extracted_vals:
+                    extracted_data[field] = extracted_vals
+                    
+            return extracted_data
+
+        # 3. O Pulo do Gato: Agrupando por Cluster!
+        final_payload = {}
+        
+        # Se a coluna de classificação do cluster existir no DataFrame:
+        if cluster_column in df.columns:
+            # Agrupa os dados pelo nome do cluster e extrai separadamente
+            for cluster_name, group_df in df.groupby(cluster_column):
+                
+                # Ignorar clusters que são 100% corretos para economizar tokens (opcional)
+                if cluster_name in ["correct_unsafe", "correct_bot"]:
+                    continue 
+
+                artifacts = get_top_artifacts(group_df)
+                if artifacts:
+                    final_payload[str(cluster_name)] = artifacts
+        else:
+            # Fallback seguro: se não achar a coluna, bota tudo no unknown_cluster
+            artifacts = get_top_artifacts(df)
+            if artifacts:
+                final_payload["unknown_cluster"] = artifacts
+                
+        output_filepath = filepath.replace(".parquet", "_artifacts.json")
+        
+        with open(output_filepath, "w", encoding="utf-8") as f:
+            json.dump(final_payload, f, indent=2, ensure_ascii=False)
             
-            df_cols_lower = {str(c).lower(): c for c in df.columns}
-            if field_lower in df_cols_lower:
-                real_col = df_cols_lower[field_lower]
-                top_values = df[real_col].dropna().value_counts().head(n_values).index.tolist()
-                extracted_vals = [str(v).strip() for v in top_values if str(v).strip().lower() not in ["none", "nan", "unknown", ""]]
-            
-            elif "headers" in df.columns:
-                extracted = []
-                for h_dict in df["headers"]:
-                    if isinstance(h_dict, dict):
-                        h_norm = {str(k).lower(): str(v).strip() for k, v in h_dict.items()}
-                        val = h_norm.get(field_lower) 
-                        if val: extracted.append(val)
-                if extracted:
-                    extracted_vals = pd.Series(extracted).value_counts().head(n_values).index.tolist()
-            
-            report["extracted_artifacts"][field] = extracted_vals if extracted_vals else "Nenhum valor encontrado."
-            
-        return json.dumps(report, indent=2, ensure_ascii=False)
+        return json.dumps({
+            "status": "success", 
+            "message": "Artefatos extraídos e salvos com sucesso.",
+            "extracted_filepath": output_filepath
+        })
+        
         
     except Exception as e:
         return json.dumps({"status": "error", "message": f"{type(e).__name__}: {str(e)}"})
+        
 
-# @tool()
-# def investigate_threat_actors(filepath: str, fields_to_investigate: Optional[List[str]] = None, n_values_to_investigate: int = 2, content_size: int = 400) -> str:
-#     """
-#     Performs web OSINT on anomalous HTTP traffic to identify botnets, scanners, and malicious infrastructure. 
-#     Use this tool to investigate the reputation of specific ISPs, User-Agents, or suspicious custom headers.
-
-#     Args:
-#         filepath (str): Path to the .parquet file containing the anomalous requests.
-#         fields_to_investigate (Optional[List[str]]): Specific headers or columns to investigate 
-#             (e.g., ["user-agent", "ip_api_isp", "x-body-platform"]). Defaults to standard targets if None.
-#         n_values_to_investigate (int): Number of top frequent values to extract and search per field. Default is 2.
-#         content_size (int): Maximum character limit for each search result to save LLM context tokens. Default is 400.
-
-#     Returns:
-#         str: A JSON-formatted string containing the OSINT search results for the targeted artifacts.
-#     """
-
-#     if not fields_to_investigate:
-#         fields_to_investigate = ["user-agent", "ip_api_isp"]
-
-#         try:
-#             df = pd.read_parquet(filepath)
-#             report = {"status": "sucess", "investigations": {}}
-
-#             print("Fields to investigate: ", fields_to_investigate)
-#             for field in fields_to_investigate:
-#                 field_lower = field.lower()
-#                 target_values = []
-#                 report["investigations"][field] = {}
-
-#                 if field_lower in [c.lower() for c in df.columns]:
-#                     real_col = [c for c in df.columns if c.lower() == field_lower][0]
-#                     top_values = df[real_col].dropna().value_counts().head(n_values_to_investigate).index.to_list()
-#                     target_values = [str(v).strip() for v in top_values if str(v).strip().lower() not in ["none", "nan", "unknown", ""]]
-#                 else:
-#                     extracted = []
-#                     for headers in df["headers"]:
-#                         if isinstance(headers, dict):
-#                             h_norm = {str(k).lower(): str(v).strip() for k, v in headers.items()}
-#                             if field_lower in h_norm:
-#                                 extracted.append(h_norm[field_lower])
-
-#                     if extracted:
-#                         target_values = pd.Series(extracted).value_counts().head(n_values_to_investigate).index.tolist()
-
-#                 for val in target_values:
-#                     if "isp" in field_lower:
-#                         query = f'Is the ISP "{val}" known for bad reputation, spam, botnets or malicious traffic?'
-#                         print(query)
-#                     elif "user-agent" in field_lower:
-#                         query = f'What is the exact purpose of the User-Agent "{val}"? Is it a bot, crawler, or scanner? Exclude CVEs.'
-#                         print(query)
-#                     else:
-#                         query = f'Cybersecurity context: What does the HTTP header "{field}" with value "{val}" indicate? Is it used by specific bots, scanners, or malware?'
-#                         print(query)
-
-#                     try:
-#                         res = tavily_search.invoke({"query": query})
-#                         print(res)
-#                         if res and isinstance(res, list):
-#                             content = res[0].get('content', '')
-
-#                             val_camp = val[:20]
-
-#                             report["investigations"][field][val_camp] = content[:content_size] + "..." if len(content) > 400 else content
-#                         else:
-#                             report["investigations"][field][val_camp] = "No clearly results from Tavily."
-#                     except Exception as e:
-#                         report["investigations"][field][val_camp] = f"ERROR in search: {str(e)}."
-
-#             return json.dumps(report, indent=2, ensure_ascii=False)
-
-#         except Exception as e:
-#             return json.dumps({"status": "error", "message": str(e)})
 @tool
 def analyze_traffic_patterns(filepath: str) -> str:
     """
-    Ferramenta de Machine Learning especializada em encontrar botnets e ataques.
-    Use esta ferramenta passando APENAS o caminho do arquivo parquet (.parquet).
-    Ela retornará um JSON classificando o tráfego em 'bot', 'unsafe', 'mixed' ou 'noise_anomaly'.
+    Machine Learning tool specialized in detecting botnets and attacks.
+    Use this tool by passing ONLY the path to the parquet file (.parquet).
+    It will return a JSON classifying the traffic as 'bot', 'unsafe', 'mixed', or 'noise_anomaly'.
     """
-    # A ferramenta apenas repassa o caminho para o método do serviço
-    # clustering_service.run(filepath)
+    clustering_service.run(filepath)
     return clustering_service.analyze_traffic_for_llm(filepath)
 
 @tool
@@ -227,7 +185,7 @@ def run_ml_inference_pipeline(file_path: str, traffic_source: str) -> str:
     try:
         inference_service = MILAttetionService(
             traffic_source=traffic_source,
-            emb_config=EMBEDDING_CONFIG,
+            emb_config=settings.EMBEDDING_CONFIG,
         )
     except Exception as e:
         return f"Error initializing ModelService: {e}"
@@ -275,6 +233,150 @@ def clear_directory(file_path, predictions_file_path):
         "status": "sucess",
         "message": "temporary files already deleted"
     }
+
+import json
+import ast
+import pandas as pd
+from typing import Dict, List, Optional, Any
+from langchain.tools import tool
+
+@tool()
+async def filter_artifacts_by_baseline(
+    extracted_filepath: str, 
+    hashes_to_exclude: List[str],
+    traffic_source: Optional[str] = None
+) -> str:
+    """
+    Recebe os artefatos suspeitos (do cluster) e os valida contra o histórico (baseline).
+    Descarta valores que são comprovadamente tráfego humano (Falsos Positivos) e retorna APENAS os alvos para OSINT.
+    """
+    try:
+        # ==========================================
+        # 1. TRATAMENTO DO FORMATO DO LLM
+        # ==========================================
+        # Transforma o formato plano recebido {'user-agent': ['...'], 'ip_api_isp': ['...']} 
+        # em um formato padronizado para o nosso loop funcionar.
+        # Blindagem: se o LLM mandar um dicionário com o path dentro
+        if isinstance(extracted_filepath, dict):
+            extracted_filepath = extracted_filepath.get("extracted_filepath", "") or extracted_filepath.get("filepath", "")
+        extracted_filepath = str(extracted_filepath).strip()
+
+        # Verifica se o arquivo realmente existe
+        if not os.path.exists(extracted_filepath):
+            return json.dumps({"status": "error", "message": f"Arquivo não encontrado: {extracted_filepath}"})
+
+        # ==========================================
+        # LENDO O PAYLOAD DO DISCO (CUSTO ZERO DE TOKENS)
+        # ==========================================
+        with open(extracted_filepath, "r", encoding="utf-8") as f:
+            suspicious_artifacts = json.load(f)
+
+        # ==========================================
+        # 2. BUSCA NO BANCO DE DADOS
+        # ==========================================
+        if not traffic_source:
+            traffic_source = await campaign_service.fetch_traffic_source_by_hash(hashes_to_exclude[0])
+
+        hashes_baseline = await campaign_service.fetch_recent_active_campaign_hashes_excluding(
+            traffic_source=traffic_source, excluded_hashes=hashes_to_exclude, limit=50
+        )
+
+        print("Hashes baseline: ", hashes_baseline)
+        print("Traffic source: ", traffic_source)
+
+        request_baseline = await request_service.fetch_training_sample_by_hashes(hashes=hashes_baseline, limit_each=1000)
+        print("request baseline len: ", len(request_baseline))
+
+        df_baseline = pd.DataFrame(request_baseline)
+        
+        if "decision" not in df_baseline.columns:
+            return json.dumps({"status": "error", "message": "Baseline não possui a coluna 'decision'."})
+
+        # Prepara a coluna headers do baseline se for string
+        if "headers" in df_baseline.columns:
+            def safe_parse(val):
+                if isinstance(val, dict): return val
+                if isinstance(val, str):
+                    try: return json.loads(val)
+                    except: 
+                        try: return ast.literal_eval(val)
+                        except: return {}
+                return {}
+            df_baseline["headers"] = df_baseline["headers"].apply(safe_parse)
+
+        report = {
+            "status": "success",
+            "APPROVED_FOR_OSINT": {},
+            "REJECTED_FALSE_POSITIVES": {}
+        }
+
+        # 2. Cruza os valores iterando pelos CLUSTERS fornecidos
+        for cluster_name, fields_dict in suspicious_artifacts.items():
+            report["APPROVED_FOR_OSINT"][cluster_name] = {}
+            report["REJECTED_FALSE_POSITIVES"][cluster_name] = {}
+
+            for field, values in fields_dict.items():
+                field_lower = field.lower()
+                report["APPROVED_FOR_OSINT"][cluster_name][field] = {}
+                report["REJECTED_FALSE_POSITIVES"][cluster_name][field] = {}
+
+                for val in values:
+                    val_lower = str(val).lower().strip()
+                    matches = pd.Series(False, index=df_baseline.index)
+                    
+                    # Busca o valor dentro dos headers do baseline
+                    if "headers" in df_baseline.columns:
+                        def check_match(h_dict):
+                            if not isinstance(h_dict, dict): return False
+                            # Converte chaves para minúsculo para garantir o match
+                            h_lower_keys = {str(k).lower(): str(v).strip().lower() for k, v in h_dict.items()}
+                            return h_lower_keys.get(field_lower) == val_lower
+                        
+                        matches = df_baseline["headers"].apply(check_match)
+
+                    subset = df_baseline[matches]
+                    total_occurrences = len(subset)
+                    
+                    # Se não tem histórico suficiente, é suspeito por ser novidade (Zero-Day)
+                    if total_occurrences < 10:
+                        report["REJECTED_FALSE_POSITIVES"][cluster_name][field][val] = f"Sem dados no baseline para análise"
+                        continue
+
+                    # Calcula a distribuição percentual
+                    dist = subset["decision"].value_counts(normalize=True) * 100
+                    pct_bot = dist.get("bots", 0.0)
+                    pct_human = dist.get("unsafe", 0.0)
+                    
+                    # ==========================================
+                    # LÓGICA DE TRIAGEM POR TIPO DE CLUSTER
+                    # ==========================================
+                    if cluster_name == "unsafe_pred_bot":
+                        # REGRA 1: Tráfego humano suspeito de ser bot escondido.
+                        # Só investigar na web se historicamente >= 70% forem BOTS reais.
+                        if pct_bot >= 70.0:
+                            report["APPROVED_FOR_OSINT"][cluster_name][field][val] = f"Aprovado. Alta chance de bot escondido ({pct_bot:.1f}% bot na baseline)."
+                        else:
+                            report["REJECTED_FALSE_POSITIVES"][cluster_name][field][val] = f"Descartado. Historicamente predominante humano ({pct_human:.1f}% humano)."
+                            
+                    elif cluster_name == "bot_pred_unsafe":
+                        # REGRA 2: Tráfego bot classificado como humano.
+                        # Só investigar na web se historicamente >= 70% forem HUMANOS reais (para evitar bloqueio injusto).
+                        if pct_human >= 70.0:
+                            report["APPROVED_FOR_OSINT"][cluster_name][field][val] = f"Aprovado. Verificar falso positivo / bloqueio injusto ({pct_human:.1f}% humano na baseline)."
+                        else:
+                            report["REJECTED_FALSE_POSITIVES"][cluster_name][field][val] = f"Descartado. O bloqueio original fazia sentido ({pct_bot:.1f}% bot)."
+                            
+                    else:
+                        # REGRA PADRÃO (para 'mixed', 'noise_anomaly', etc)
+                        if pct_human >= 85.0:
+                            report["REJECTED_FALSE_POSITIVES"][cluster_name][field][val] = f"Descartado. Tráfego benigno ({pct_human:.1f}% humano)."
+                        else:
+                            report["APPROVED_FOR_OSINT"][cluster_name][field][val] = f"Aprovado. Tráfego suspeito ({pct_bot:.1f}% bot)."
+
+        return json.dumps(report, indent=2, ensure_ascii=False)
+
+    except Exception as e:
+        return json.dumps({"status": "fatal_error", "message": f"{type(e).__name__}: {str(e)}"})
     
 @tool
 async def compare_mismatch_frequencies(

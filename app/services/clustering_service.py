@@ -6,6 +6,7 @@ from sentence_transformers import SentenceTransformer
 from sklearn.manifold import TSNE
 import hdbscan
 import plotly.express as px
+import torch
 from app.utils.analise import parse_dict_col
 import logging
 
@@ -25,7 +26,8 @@ class RequestClusteringPipeline:
         :param max_header_freq: Frequência máxima (0 a 1) para manter um header.
         """
 
-        model = SentenceTransformer(embedding_model_name)
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        model = SentenceTransformer(embedding_model_name, device=self.device)
         self.model = model
         self.max_header_freq = max_header_freq
         self.tsne_perplexity = tsne_perplexity
@@ -88,7 +90,7 @@ class RequestClusteringPipeline:
         # print("   -> Gerando embeddings RAW...")
         # embeddings_raw = self.model.encode(df["text"].tolist(), batch_size=64, show_progress_bar=True)
         
-        embeddings_filtered = self.model.encode(df["text_filtered"].tolist(), batch_size=64, show_progress_bar=False)
+        embeddings_filtered = self.model.encode(df["text_filtered"].tolist(), batch_size=64, show_progress_bar=True)
         
         # return df, embeddings_raw, embeddings_filtered
         return df, embeddings_filtered
@@ -100,11 +102,14 @@ class RequestClusteringPipeline:
         self.tsne_filtered_coords = tsne.fit_transform(embeddings_filtered)
 
     def cluster_and_classify(self, df, embeddings_filtered):
+
+
         self.clusterer = hdbscan.HDBSCAN(
             min_cluster_size=self.min_cluster_size,
             min_samples=self.min_samples
         )
         
+        print("Clustering...")
         df["cluster"] = self.clusterer.fit_predict(embeddings_filtered)
         
         # Se não tiver a coluna decision (ground truth), não há como aplicar a regra
@@ -395,8 +400,9 @@ class RequestClusteringPipeline:
 
     def filter_investiogation_data(self, df_final):
         mask = (
-                df_final["classification"].isin(["bot_pred_unsafe", "unsafe_pred_bot"]) |
-                df_final["cluster_label"].isin(["mixed", "noise_anomaly"])
+                df_final["classification"].isin(["unsafe_pred_bot"])
+                 | df_final["classification"].isin(["bot_pred_unsafe"])
+                #  | df_final["cluster_label"].isin(["mixed", "noise_anomaly"])
             )
 
         df_investigacao = df_final[mask].copy()

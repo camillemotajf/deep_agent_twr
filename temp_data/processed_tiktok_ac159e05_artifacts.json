@@ -1,0 +1,29 @@
+{
+  "bot_pred_unsafe": {
+    "sec-fetch-dest": [
+      "document"
+    ],
+    "user-agent": [
+      "Mozilla/5.0 (Linux; Android 9; moto g(6) Build/PPSS29.55-37-7-10; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/138.0.7204.179 Mobile Safari/537.36 Channel/release AppName/ultralite app_version/42.5.6 Region/BR ByteLocale/pt-PT ByteFullLocale/pt Spark/1.8.8.7-bugfix AppVersion/42.5.6 AppId/1340  PIA/2.8.8",
+      "Mozilla/5.0 (Linux; Android 15; 23053RN02A Build/AP3A.240905.015.A2) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/145.0.7632.122 Mobile Safari/537.36 musical_ly_44.2.3 JsSdk/1.0 NetType/WIFI Channel/googleplay ByteLocale/pt-BR Region/BR RevealType/Dialog",
+      "Mozilla/5.0 (Linux; Android 9; SM-J730G Build/PPR1.180610.011; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/138.0.7204.179 Mobile Safari/537.36 Channel/release AppName/ultralite app_version/42.5.6 Region/BR ByteLocale/pt-BR ByteFullLocale/pt-BR Spark/1.8.8.7-bugfix AppVersion/42.5.6 AppId/1340  PIA/2.8.8",
+      "Mozilla/5.0 (Linux; Android 13; itel A665L Build/TP1A.220624.014; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/145.0.7632.120 Mobile Safari/537.36 Channel/release AppName/ultralite app_version/29.8.55 Region/BR ByteLocale/pt-BR ByteFullLocale/pt-BR",
+      "Mozilla/5.0 (Linux; Android 16; SM-X110 Build/BP2A.250605.031.A3; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/145.0.7632.159 Safari/537.36 musical_ly_2024402030 JsSdk/1.0 NetType/WIFI Channel/googleplay AppName/musical_ly app_version/44.2.3 ByteLocale/pt-BR ByteFullLocale/pt-BR Region/BR AppId/1233 Spark/1.7.2 AppVersion/44.2.3 PIA/2.5.3 RevealType/Dialog performVal/0 Android(36/16; 213dpi; 800x1340; samsung; SM-X110; gta9wifi; mt8781; pt_BR) BytedanceWebview/d8a21c6",
+      "Mozilla/5.0 (Linux; Android 15; 23117RA68G Build/AP3A.240905.015.A2) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.7632.120 Mobile Safari/537.36 musical_ly_44.2.3 RevealType/Dialog performVal/1",
+      "Mozilla/5.0 (Linux; Android 15; RMX5303 Build/AP3A.240905.015.A2; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/145.0.7632.120 Mobile Safari/537.36 Channel/release AppName/ultralite app_version/42.9.3 Region/BR ByteLocale/pt-BR ByteFullLocale/pt-BR Spark/1.8.8.7-bugfix AppVersion/42.9.3 AppId/1340  PIA/2.8.8",
+      "Mozilla/5.0 (iPhone; CPU iPhone OS 26_2_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.2.1 Mobile/15E148 Safari/604.1 musical_ly_43.9.0 JsSdk/2.0 NetType/WIFI Channel/App Store ByteLocale/pt Region/BR isDarkMode/0 WKWebView/1 RevealType/Dialog",
+      "Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Mobile/15E148 Safari/604.1 musical_ly_43.1.0 JsSdk/2.0 NetType/WIFI Channel/App Store ByteLocale/pt Region/BR isDarkMode/0 WKWebView/1 RevealType/Dialog",
+      "Mozilla/5.0 (iPhone; CPU iPhone OS 18_3_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.3.1 Mobile/15E148 Safari/604.1 musical_ly_43.9.0 JsSdk/2.0 NetType/WIFI Channel/App Store ByteLocale/pt Region/BR isDarkMode/0 WKWebView/1 RevealType/Dialog performVal/0",
+      "Mozilla/5.0 (Linux; Android 16; SM-A566E Build/BP2A.250605.031.A3) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/145.0.7632.159 Mobile Safari/537.36 musical_ly_44.2.3 RevealType/Dialog"
+    ],
+    "ip_api_isp": [
+      "dtel telecom",
+      "desktop sigmanet comunicação multimídia sa",
+      "speed fiber connection ltda me",
+      "proxxima telecomunicacoes ltda",
+      "agreste telecomunicaÇÕes eireli-me",
+      "gilmar dos santos & cia. ltda.",
+      "amazonet telecomunicacoes ltda"
+    ]
+  }
+}

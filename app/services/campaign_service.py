@@ -28,7 +28,7 @@ class CampaignService:
             traffic_source: str,
             excluded_hashes: List[str],
             limit: int = 10
-    ) -> str:
+    ) -> List[str]:
         return await self.repository.get_recent_active_campaign_hashes_excluding(
             excluded_hashes=excluded_hashes,
             limit=limit,

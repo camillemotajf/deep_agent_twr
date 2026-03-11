@@ -179,8 +179,8 @@ async def query_mongo_requests(
     hashes: list[str] | None = None,
     start: datetime | None = None,
     end:  datetime | None = None,
-    limit_campaigns: int = 100,
-    limit_request: int = 10000
+    limit_campaigns: int = 20,
+    limit_request: int = 1000
 ) -> list[dict]:
     """
     Retrieves recent MongoDB HTTP requests and saves them to a temporary file.
@@ -210,9 +210,6 @@ async def query_mongo_requests(
                     "message: You must provide at least one 'hash' or a list of 'hashes'."
                 }
     
-    print("Start Date: ", start)
-    print("End date: ", end)
-
     try:
         results = await request_service.fetch_training_sample_by_hashes(
             hashes=campaigns,

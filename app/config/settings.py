@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     API_BROWSER_KEY: str
     API_BROWSER_URL: str
     TAVILY_API_KEY: str
+    EMBEDDING_CONFIG: str
 
     class Config:
         env_file = ".env"  

@@ -1,0 +1,61 @@
+{
+  "bot_pred_unsafe": {
+    "sec-fetch-dest": [
+      "document"
+    ],
+    "user-agent": [
+      "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Mobile Safari/537.36",
+      "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.2 Mobile/15E148 Safari/604.1",
+      "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.3 Mobile/15E148 Safari/604.1",
+      "Mozilla/5.0 (Linux; Android 16; SM-A075M Build/BP2A.250605.031.A3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.7632.159 Mobile Safari/537.36 musical_ly_44.2.3 RevealType/Dialog",
+      "Mozilla/5.0 (iPhone; CPU iPhone OS 18_6_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.6.2 Mobile/15E148 Safari/604.1 musical_ly_43.9.0 JsSdk/2.0 NetType/WIFI Channel/App Store ByteLocale/pt Region/BR isDarkMode/0 WKWebView/1 RevealType/Dialog performVal/0",
+      "Mozilla/5.0 (iPhone; CPU iPhone OS 26_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.3 Mobile/15E148 Safari/604.1 musical_ly_43.9.0 JsSdk/2.0 NetType/WIFI Channel/App Store ByteLocale/pt Region/BR isDarkMode/0 WKWebView/1 RevealType/Dialog performVal/1",
+      "Mozilla/5.0 (iPhone; CPU iPhone OS 18_6_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.6 Mobile/15E148 Safari/604.1",
+      "Mozilla/5.0 (iPhone; CPU iPhone OS 26_2_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.2.1 Mobile/15E148 Safari/604.1 musical_ly_43.9.0 JsSdk/2.0 NetType/WIFI Channel/App Store ByteLocale/pt Region/BR isDarkMode/0 WKWebView/1 RevealType/Dialog performVal/1",
+      "Mozilla/5.0 (iPhone; CPU iPhone OS 18_4_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.4.1 Mobile/15E148 Safari/604.1 musical_ly_43.9.0 JsSdk/2.0 NetType/WIFI Channel/App Store ByteLocale/pt Region/BR isDarkMode/0 RevealType/Dialog",
+      "Mozilla/5.0 (iPhone; CPU iPhone OS 15_7_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5 Mobile/15E148 Safari/604.1 musical_ly_42.1.0 JsSdk/2.0 NetType/WIFI Channel/App Store ByteLocale/en Region/HU isDarkMode/0 WKWebView/1 RevealType/Dialog",
+      "Mozilla/5.0 (Linux; Android 9; SM-G611MT Build/PPR1.180610.011; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/138.0.7204.179 Mobile Safari/537.36 Channel/release AppName/ultralite app_version/42.9.3 Region/PT ByteLocale/pt-PT ByteFullLocale/pt Spark/1.8.8.7-bugfix AppVersion/42.9.3 AppId/1340  PIA/2.8.8",
+      "Mozilla/5.0 (iPhone; CPU iPhone OS 26_2_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.2.1 Mobile/15E148 Safari/604.1 musical_ly_43.9.0 Region/BR performVal/1",
+      "Mozilla/5.0 (Linux; Android 14; 23129RA5FL Build/UKQ1.231207.002) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/145.0.7632.120 Mobile Safari/537.36 musical_ly_43.9.3 JsSdk/1.0 NetType/WIFI Channel/googleplay AppName/musical_ly app_version/43.9.3 ByteLocale/pt-BR ByteFullLocale/pt-BR Region/BR AppId/1233 RevealType/Dialog performVal/1",
+      "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0.1 Mobile/15E148 Safari/604.1",
+      "Mozilla/5.0 (iPhone; CPU iPhone OS 26_3_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.3.1 Mobile/15E148 Safari/604.1 musical_ly_43.9.0 JsSdk/2.0 NetType/WIFI Channel/App Store ByteLocale/pt Region/BR isDarkMode/0 WKWebView/1 RevealType/Dialog",
+      "Mozilla/5.0 (iPhone; CPU iPhone OS 26_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.3 Mobile/15E148 Safari/604.1 musical_ly_43.9.0 JsSdk/2.0 NetType/WIFI Channel/App Store ByteLocale/pt Region/BR isDarkMode/0 WKWebView/1 RevealType/Dialog performVal/0",
+      "Mozilla/5.0 (iPhone; CPU iPhone OS 15_7_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5 Mobile/15E148 Safari/604.1 musical_ly_42.5.1 JsSdk/2.0 NetType/WIFI Channel/App Store ByteLocale/en Region/br isDarkMode/0 WKWebView/1 RevealType/Dialog",
+      "Mozilla/5.0 (iPhone; CPU iPhone OS 16_3_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.3.1 Mobile/15E148 Safari/604.1 musical_ly_43.9.0 JsSdk/2.0 NetType/WIFI Channel/App Store ByteLocale/pt Region/BR isDarkMode/0 WKWebView/1 RevealType/Dialog performVal/0",
+      "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 musical_ly_43.9.0 JsSdk/2.0 NetType/WIFI Channel/App Store ByteLocale/hu Region/HU isDarkMode/0 WKWebView/1 RevealType/Dialog",
+      "Mozilla/5.0 (Linux; Android 11; moto e20 Build/RONS31.267-94-14) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/145.0.7632.159 Mobile Safari/537.36 musical_ly_44.2.3 JsSdk/1.0 NetType/WIFI Channel/googleplay ByteLocale/pt-BR Region/BR RevealType/Dialog"
+    ],
+    "ip_api_isp": [
+      "desktop sigmanet comunicação multimídia sa",
+      "cabo servicos de telecomunicacoes ltda",
+      "proxxima telecomunicacoes ltda",
+      "cogent communications",
+      "digitotal networks telecomunicações ltda",
+      "akamai technologies, inc.",
+      "dtel telecom",
+      "weclix telecom s/a",
+      "amazonia telecomunicacoes ltda",
+      "datacamp limited",
+      "cloudflare, inc.",
+      "claro nxt telecomunicacoes ltda",
+      "magyar telekom",
+      "uni telecom ltda",
+      "ggnet telecom backbone",
+      "ferabraznet comenrcio e serv. de telecom. ltda-me",
+      "amazonet telecomunicacoes ltda",
+      "syncnet telecom",
+      "jjva provedor de internet me ltda",
+      "packethub s.a."
+    ],
+    "sec-fetch-site": [
+      "cross-site",
+      "same-origin"
+    ],
+    "sec-fetch-mode": [
+      "navigate"
+    ],
+    "sec-fetch-user": [
+      "?1"
+    ]
+  }
+}

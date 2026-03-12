@@ -234,16 +234,12 @@ def clear_directory(file_path, predictions_file_path):
         "message": "temporary files already deleted"
     }
 
-import json
-import ast
-import pandas as pd
-from typing import Dict, List, Optional, Any
-from langchain.tools import tool
 
 @tool()
 async def filter_artifacts_by_baseline(
     extracted_filepath: str, 
     hashes_to_exclude: List[str],
+    n_reqs_baseline: int = 1000,
     traffic_source: Optional[str] = None
 ) -> str:
     """
@@ -251,29 +247,16 @@ async def filter_artifacts_by_baseline(
     Descarta valores que são comprovadamente tráfego humano (Falsos Positivos) e retorna APENAS os alvos para OSINT.
     """
     try:
-        # ==========================================
-        # 1. TRATAMENTO DO FORMATO DO LLM
-        # ==========================================
-        # Transforma o formato plano recebido {'user-agent': ['...'], 'ip_api_isp': ['...']} 
-        # em um formato padronizado para o nosso loop funcionar.
-        # Blindagem: se o LLM mandar um dicionário com o path dentro
         if isinstance(extracted_filepath, dict):
             extracted_filepath = extracted_filepath.get("extracted_filepath", "") or extracted_filepath.get("filepath", "")
         extracted_filepath = str(extracted_filepath).strip()
 
-        # Verifica se o arquivo realmente existe
         if not os.path.exists(extracted_filepath):
             return json.dumps({"status": "error", "message": f"Arquivo não encontrado: {extracted_filepath}"})
 
-        # ==========================================
-        # LENDO O PAYLOAD DO DISCO (CUSTO ZERO DE TOKENS)
-        # ==========================================
         with open(extracted_filepath, "r", encoding="utf-8") as f:
             suspicious_artifacts = json.load(f)
 
-        # ==========================================
-        # 2. BUSCA NO BANCO DE DADOS
-        # ==========================================
         if not traffic_source:
             traffic_source = await campaign_service.fetch_traffic_source_by_hash(hashes_to_exclude[0])
 
@@ -281,10 +264,7 @@ async def filter_artifacts_by_baseline(
             traffic_source=traffic_source, excluded_hashes=hashes_to_exclude, limit=50
         )
 
-        print("Hashes baseline: ", hashes_baseline)
-        print("Traffic source: ", traffic_source)
-
-        request_baseline = await request_service.fetch_training_sample_by_hashes(hashes=hashes_baseline, limit_each=1000)
+        request_baseline = await request_service.fetch_training_sample_by_hashes(hashes=hashes_baseline, limit_each=n_reqs_baseline)
         print("request baseline len: ", len(request_baseline))
 
         df_baseline = pd.DataFrame(request_baseline)
@@ -292,7 +272,6 @@ async def filter_artifacts_by_baseline(
         if "decision" not in df_baseline.columns:
             return json.dumps({"status": "error", "message": "Baseline não possui a coluna 'decision'."})
 
-        # Prepara a coluna headers do baseline se for string
         if "headers" in df_baseline.columns:
             def safe_parse(val):
                 if isinstance(val, dict): return val
@@ -304,13 +283,15 @@ async def filter_artifacts_by_baseline(
                 return {}
             df_baseline["headers"] = df_baseline["headers"].apply(safe_parse)
 
+        print(df_baseline[df_baseline["decision"] == "bots"]["ip_api_isp"].value_counts())
         report = {
             "status": "success",
             "APPROVED_FOR_OSINT": {},
             "REJECTED_FALSE_POSITIVES": {}
         }
 
-        # 2. Cruza os valores iterando pelos CLUSTERS fornecidos
+        print(suspicious_artifacts["unsafe_pred_bot"])
+
         for cluster_name, fields_dict in suspicious_artifacts.items():
             report["APPROVED_FOR_OSINT"][cluster_name] = {}
             report["REJECTED_FALSE_POSITIVES"][cluster_name] = {}
@@ -324,27 +305,33 @@ async def filter_artifacts_by_baseline(
                     val_lower = str(val).lower().strip()
                     matches = pd.Series(False, index=df_baseline.index)
                     
-                    # Busca o valor dentro dos headers do baseline
+                    df_cols_lower = {str(c).lower(): c for c in df_baseline.columns}
+                    if field_lower in df_cols_lower:
+                        real_col = df_cols_lower[field_lower]
+                        # Comparação vetorizada do Pandas (Extremamente rápida)
+                        col_matches = df_baseline[real_col].astype(str).str.lower().str.strip() == val_lower
+                        matches = matches | col_matches # Junta com os matches atuais
+                    
+                    # 2. BUSCA DENTRO DO DICIONÁRIO 'headers'
                     if "headers" in df_baseline.columns:
                         def check_match(h_dict):
                             if not isinstance(h_dict, dict): return False
-                            # Converte chaves para minúsculo para garantir o match
                             h_lower_keys = {str(k).lower(): str(v).strip().lower() for k, v in h_dict.items()}
                             return h_lower_keys.get(field_lower) == val_lower
                         
-                        matches = df_baseline["headers"].apply(check_match)
+                        header_matches = df_baseline["headers"].apply(check_match)
+                        matches = matches | header_matches # Junta usando OR lógico
 
                     subset = df_baseline[matches]
                     total_occurrences = len(subset)
                     
-                    # Se não tem histórico suficiente, é suspeito por ser novidade (Zero-Day)
                     if total_occurrences < 10:
                         report["REJECTED_FALSE_POSITIVES"][cluster_name][field][val] = f"Sem dados no baseline para análise"
                         continue
 
                     # Calcula a distribuição percentual
                     dist = subset["decision"].value_counts(normalize=True) * 100
-                    pct_bot = dist.get("bots", 0.0)
+                    pct_bot = dist.get("bots", 0.0) 
                     pct_human = dist.get("unsafe", 0.0)
                     
                     # ==========================================

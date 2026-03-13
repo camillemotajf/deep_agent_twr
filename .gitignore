@@ -7,3 +7,6 @@
 *.model.*
 *.model
 *.parquet 
+*.json
+*.html
+*.png
